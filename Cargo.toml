@@ -12,3 +12,6 @@ tokio-pg-mapper = "0.2.0"
 tokio-pg-mapper-derive = "0.2.0"
 derive_more = "0.99.17"
 serde = { version = "1.0.137", features = ["derive"] }
+log4rs = "1.1.1"
+log = "0.4.8"
+chrono = "0.4"

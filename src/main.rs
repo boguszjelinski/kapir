@@ -1,13 +1,32 @@
+use std::future::Future;
 use derive_more::{Display, From};
 
-use actix_web::{get,put, web, App, HttpServer, HttpResponse, Result, Error}; // Responder
+use actix_web::{get,put, post, web, App, HttpServer, HttpResponse, Result, Error}; // Responder
 use actix_web_httpauth::extractors::basic::BasicAuth;
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, PoolError, RecyclingMethod};
 use tokio_postgres::NoTls;
 use tokio_postgres::error::Error as PGError;
 use tokio_pg_mapper::Error as PGMError;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
+
+use log::{info,warn,debug,error,LevelFilter};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Config, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+};
+mod service;
+use service::{select_cab, select_order, update_cab, update_order, insert_order, init_read_stops};
+
+mod model;
+use model::{Cab, Order};
+
+mod distance;
+use distance::{init_distance};
 
 #[derive(Display, From, Debug)]
 pub enum MyError {
@@ -20,7 +39,8 @@ impl std::error::Error for MyError {}
 
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
-   
+    setup_logger("kapi.log".to_string());
+
     let mut pg_config = tokio_postgres::Config::new();
     pg_config.host("localhost");
     pg_config.user("kabina");
@@ -32,16 +52,35 @@ async fn main() -> std::io::Result<()> {
     let mgr = Manager::from_config(pg_config, NoTls, mgr_config);
     let pool = Pool::new(mgr, 16);
 
+    init_dist_service(&pool).await;
+  
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .service(put_cab)
             .service(put_cab2)
             .service(get_cab)
+            .service(get_order)
+            .service(put_order)
+            .service(put_order2)
+            .service(post_order)
+            .service(post_order2)
     })
     .bind(("127.0.0.1", 8080))?
     .run()
     .await
+}
+
+async fn init_dist_service(pool: &Pool) {
+    match pool.get().await.map_err(MyError::PoolError) {
+        Ok(c) => {
+            let stops = init_read_stops(c).await;
+            init_distance(&stops);
+        }
+        Err(err) => {
+            panic!("Distance service could not start {}", err);
+        }
+    };
 }
 
 // CONTROLLERS
@@ -59,6 +98,31 @@ async fn put_cab(obj: web::Json<Cab>, auth: BasicAuth, db_pool: web::Data<Pool>)
 #[put("/cabs/")]
 async fn put_cab2(obj: web::Json<Cab>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     return update_object(obj, db_pool, update_cab).await;
+}
+
+#[get("/orders/{id}")]
+async fn get_order(id: web::Path<i64>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return get_object(id, db_pool, select_order).await;
+}
+
+#[put("/orders")]
+async fn put_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return update_object(obj, db_pool, update_order).await;
+}
+
+#[put("/orders/")]
+async fn put_order2(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return update_object(obj, db_pool, update_order).await;
+}
+
+#[post("/orders")]
+async fn post_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return update_object(obj, db_pool, insert_order).await;
+}
+
+#[post("/orders/")]
+async fn post_order2(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return update_object(obj, db_pool, insert_order).await;
 }
 
 async fn get_object<Fut, T>(id: web::Path<i64>, db_pool: web::Data<Pool>, f: impl FnOnce(Client, i64) -> Fut) 
@@ -97,50 +161,37 @@ where
     };
 }
 
-// SERVICE
-async fn select_cab(c: Client, id: i64) -> Cab {
-    let sql = "SELECT location, status, name FROM cab WHERE id=$1".to_string();
-    match c.query_one(&sql, &[&(id)]).await {
-        Ok(row) => {
-            return Cab { id: id, location: row.get(0), status: get_cab_status(row.get(1)) };
-        }
-        Err(err) => {
-            println!("{}", err);
-            return Cab { id: -1, location: -1, status: CabStatus::CHARGING }
-        }
-    }
-} 
+fn setup_logger(file_path: String) {
+    let level = log::LevelFilter::Info;
+    // Build a stderr logger.
+    let stderr = ConsoleAppender::builder().target(Target::Stderr).build();
+    // Logging to log file.
+    let logfile = FileAppender::builder()
+        // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
+        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S)} {l} - {m}\n")))
+        .build(file_path)
+        .unwrap();
 
-async fn update_cab(c: Client, cab: Cab) -> Cab {
-    let sql = "UPDATE cab SET status=$1, location=$2 WHERE id=$3".to_string(); 
-    match c.execute(&sql, &[&(cab.status as i32), &cab.location, &cab.id]).await {
-        Ok(count) => {
-            println!("Updated rows: {}", count);
-        }
-        Err(err) => {
-            println!("{}", err);
-        }
-    }
-    return cab.clone();
-}
+    // Log Trace level output to file where trace is the default level
+    // and the programmatically specified level to stderr.
+    let config = Config::builder()
+        .appender(Appender::builder().build("logfile", Box::new(logfile)))
+        .appender(
+            Appender::builder()
+                .filter(Box::new(ThresholdFilter::new(level)))
+                .build("stderr", Box::new(stderr)),
+        )
+        .build(
+            Root::builder()
+                .appender("logfile")
+                .appender("stderr")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
 
-// MODEL
-#[derive(Copy, Clone, Deserialize, Serialize)]
-pub struct Cab {
-    pub id: i64,
-	pub location: i32,
-    pub status: CabStatus
-}
-
-#[repr(i8)]
-#[derive(Copy, Clone, Deserialize, Serialize)]
-pub enum CabStatus {
-    ASSIGNED = 0,
-    FREE = 1,
-    CHARGING =2, // out of order, ...
-}
-
-pub fn get_cab_status(idx: i8) -> CabStatus {
-    let s: CabStatus = unsafe { ::std::mem::transmute(idx) };
-    return s
+    // Use this to change log levels at runtime.
+    // This means you can change the default log level to trace
+    // if you are trying to debug an issue and need more logs on then turn it off
+    // once you are done.
+    let _handle = log4rs::init_config(config);
 }
