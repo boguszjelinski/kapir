@@ -1,11 +1,8 @@
 use std::time::SystemTime;
-use chrono::prelude::Utc;
-
 use deadpool_postgres::Client;
-use crate::model::{Cab, CabStatus, Order, Stop, get_cab_status, get_order_status, OrderStatus};
+use crate::model::{Cab, CabStatus, Order, Stop, Leg, Route, RouteStatus, get_cab_status, get_order_status, get_route_status, OrderStatus};
 use crate::distance::{STOPS, STOPS_LEN, DIST};
 
-// SERVICE
 pub async fn select_cab(c: Client, id: i64) -> Cab {
     let sql = "SELECT location, status FROM cab WHERE id=$1".to_string();
     match c.query_one(&sql, &[&id]).await {
@@ -27,6 +24,53 @@ pub async fn update_cab(c: Client, cab: Cab) -> Cab {
     check_result(c.execute(&sql, &[&(cab.status as i32), &cab.location, &cab.id]).await);
     return cab.clone();
 }
+
+pub async fn update_leg(c: Client, leg: Leg) -> Leg {
+    let sql = "UPDATE leg SET status=$1 WHERE id=$2".to_string(); 
+    check_result(c.execute(&sql, &[&(leg.status as i32), &leg.id]).await);
+    return leg.clone();
+}
+
+pub async fn update_route(c: Client, route: Route) -> Route {
+    let sql = "UPDATE route SET status=$1 WHERE id=$2".to_string(); 
+    check_result(c.execute(&sql, &[&(route.status as i32), &route.id]).await);
+    return route.clone();
+}
+
+pub async fn select_route(c: Client, id: i64) -> Route {
+    let sql = "SELECT id FROM route WHERE cab_id=$1 AND status=1 ORDER BY id LIMIT 1".to_string(); //status=1: ASSIGNED
+    match c.query_one(&sql, &[&id]).await {
+        Ok(row) => {
+            let route_id = row.get(0);
+            let mut legs: Vec<Leg> = vec![];
+            // TODO: maybe a join and one DB call?
+            let leg_sql = "SELECT id, from_stand, to_stand, place, distance, started, completed, status \
+                                 FROM leg WHERE route_id=$1".to_string();
+            for row in c.query(&leg_sql, &[&route_id]).await.unwrap() {
+                legs.push(Leg { 
+                    id:     row.get(0), 
+                    route_id: route_id, 
+                    from:   row.get(1), 
+                    to:     row.get(2), 
+                    place:  row.get(3), 
+                    dist:   row.get(4), 
+                    started:row.get(5), 
+                    completed:row.get(6), 
+                    status: get_route_status(row.get(7))
+                });
+            }
+            return Route {
+                id: route_id,
+                status: RouteStatus::ASSIGNED, // see WHERE above
+                legs: legs
+            }
+        }
+        Err(err) => {
+            println!("{}", err);
+            return Route { ..Default::default() }
+        }
+    }
+} 
 
 pub async fn select_order(c: Client, id: i64) -> Order {
     let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, \
@@ -80,13 +124,15 @@ pub async fn insert_order(c: Client, o: Order) -> Order {
         println!("a joker");
         return Order{ ..Default::default() }
     }
-    let date_as_string = Utc::now().to_string();
+    //let date_as_string = &Utc::now().to_string()[..19];
+    //let time_now =  chrono::NaiveDateTime::No;
+    //println!("{}", date_as_string);
     let sql = "INSERT INTO taxi_order (from_stand, to_stand, max_loss, max_wait, shared, in_pool, eta,\
-                    status, received, distance, customer_id) VALUES ($1,$2,$3,$4,$5,false,-1,$7,'$8',$9,$10) RETURNING (id)".to_string(); 
-    let mut dist: i16 = 0;
-    unsafe { dist = DIST[o.from as usize][o.to as usize]; }
+                    status, received, distance, customer_id) VALUES ($1,$2,$3,$4,$5,false,-1,$6,$7,$8,$9) RETURNING (id)".to_string(); 
+    let dist: i32;
+    unsafe { dist = DIST[o.from as usize][o.to as usize] as i32; }
     match c.query_one(&sql, &[
-        &o.from, &o.to, &o.loss, &o.wait, &o.shared, &(OrderStatus::ASSIGNED as i32), &date_as_string, 
+        &o.from, &o.to, &o.loss, &o.wait, &o.shared, &(OrderStatus::ASSIGNED as i32), &(SystemTime::now()), 
         &dist, &o.cust_id]).await {
         Ok(row) => {
             let mut ret: Order = o.clone();
@@ -121,13 +167,21 @@ pub async fn init_read_stops(client: Client) -> Vec<Stop> {
             bearing: row.get(3)
         });
     }
-    let slice = ret.as_slice();
     unsafe {
-    STOPS = match slice.try_into() {         
-        Ok(arr) => arr,         
-        Err(_) => panic!("Expected a Vec of length {} but it was {}", 32, ret.len()),     
-    };     
-    STOPS_LEN = ret.len();
+        for i in 0 .. ret.len() {
+            STOPS[i] = ret[i];
+        }
+        STOPS_LEN = ret.len();
+    }
+    return ret;
+}
+
+pub async fn select_stops() -> Vec<Stop> {
+    let mut ret: Vec<Stop> = Vec::new();
+    unsafe {
+        for i in 0 .. STOPS_LEN {
+            ret.push(STOPS[i]);
+        }
     }
     return ret;
 }
