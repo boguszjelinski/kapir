@@ -55,13 +55,13 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .service(put_cab) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":2, "location": 123, "status":"FREE", "name":"A2"}' http://localhost:8080/cabs
-            .service(put_cab2)
+            .service(put_cab2) // {"Id":0,"Location":0,"Status":"FREE","Name":""}
             .service(get_cab) // curl -u cab1:cab1 http://localhost:8080/cabs/1916
             .service(get_order) // curl -u cab2:cab2 http://localhost:8080/orders/51150
             .service(put_order) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":51150, "status":"ASSIGNED"}' http://localhost:8080/orders
             .service(put_order2)
             .service(post_order) //curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u "cust28:cust28" -d '{"fromStand":4082, "toStand":4083, "maxWait":10, "maxLoss":90, "shared": true}' http://localhost:8080/orders
-            .service(post_order2)
+            .service(post_order2) // {"Id":-1,"fromStand":1363,"toStand":1362,"Eta":0,"InPool":true,"Cab":{"Id":0,"Location":0,"Status":"","Name":""},"Status":"RECEIVED","MaxWait":15,"MaxLoss":50,"Distance":0}
             .service(put_leg) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":17081, "status":"STARTED"}' http://localhost:8080/legs
             .service(put_leg2)
             .service(put_route) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":9724, "status":"ASSIGNED"}' http://localhost:8080/routes
@@ -152,7 +152,6 @@ async fn put_order2(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<P
 async fn post_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     return just_post_order(obj, auth, db_pool).await;
 }
-
 #[post("/orders/")]
 async fn post_order2(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     return just_post_order(obj, auth, db_pool).await;
@@ -162,7 +161,6 @@ async fn post_order2(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<
 async fn get_stops() -> Result<HttpResponse, Error> {
     return Ok(HttpResponse::Ok().json(select_stops().await));
 }
-
 #[get("/stops/")]
 async fn get_stops2() -> Result<HttpResponse, Error> {
     return Ok(HttpResponse::Ok().json(select_stops().await));
@@ -198,8 +196,9 @@ async fn just_put_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Da
 }
 
 async fn just_post_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
-    let o: Order = obj.into_inner();
+    let mut o: Order = obj.into_inner();
     info!("POST order from={} to={} usr_id={}", o.from, o.to, auth.user_id());
+    o.cust_id = get_auth_id(auth.user_id());
     return update_object(o, db_pool, insert_order).await;
 }
 
@@ -239,6 +238,19 @@ where Fut: Future<Output = T>, T: Serialize {
     };
 }
 
+fn get_auth_id(id: &str) -> i64 {
+    if id.len() < 4 { // cab0
+        return -1;
+    }
+    if id.starts_with("cab") || id.starts_with("adm") {
+       return id[3..].parse().unwrap();
+    }
+    if id.starts_with("cust") {
+        return id[4..].parse().unwrap();
+    }
+    return -1;
+}
+
 fn setup_logger(file_path: String) {
     let level = log::LevelFilter::Info;
     // Build a stderr logger.
@@ -274,15 +286,3 @@ fn setup_logger(file_path: String) {
     let _handle = log4rs::init_config(config);
 }
 
-fn get_auth_id(id: &str) -> i64 {
-    if id.len() < 4 { // cab0
-        return -1;
-    }
-    if id.starts_with("cab") || id.starts_with("adm") {
-       return id[3..].parse().unwrap();
-    }
-    if id.starts_with("cust") {
-        return id[4..].parse().unwrap();
-    }
-    return -1;
-}

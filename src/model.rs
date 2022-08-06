@@ -1,15 +1,15 @@
 use std::{time::SystemTime, fmt};
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Cab {
     pub id: i64,
 	pub location: i32,
     pub status: CabStatus
 }
 
-#[repr(i8)]
+#[repr(i32)]
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
 pub enum CabStatus {
     ASSIGNED = 0,
@@ -23,7 +23,7 @@ impl fmt::Display for CabStatus {
     }
 }
 
-pub fn get_cab_status(idx: i8) -> CabStatus {
+pub fn get_cab_status(idx: i32) -> CabStatus {
     let s: CabStatus = unsafe { ::std::mem::transmute(idx) };
     return s
 }
@@ -35,16 +35,13 @@ impl Default for Cab {
 }
 // ORDER
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Order {
     #[serde(default)]
     pub id: i64,
-    #[serde(default,rename = "fromStand")]
 	pub from: i32,
-    #[serde(default,rename = "toStand")]
     pub to: i32,
-    #[serde(default,rename = "maxWait")]
 	pub wait: i32,
-    #[serde(default,rename = "maxLoss")]
 	pub loss: i32,
     #[serde(default)]
 	pub dist: i32,
@@ -70,7 +67,7 @@ pub struct Order {
     pub cust_id: i64
 }
 
-#[repr(i8)]
+#[repr(i32)]
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
 pub enum OrderStatus {
     RECEIVED = 0,
@@ -88,7 +85,7 @@ impl Default for OrderStatus {
     fn default() -> Self { OrderStatus::REFUSED }
 }
 
-pub fn get_order_status(idx: i8) -> OrderStatus {
+pub fn get_order_status(idx: i32) -> OrderStatus {
     let s: OrderStatus = unsafe { ::std::mem::transmute(idx) };
     return s
 }
@@ -123,7 +120,6 @@ impl fmt::Display for OrderStatus {
 }
 
 // STOP
-
 #[derive(Copy, Clone, Deserialize, Serialize)]
 pub struct Stop {
     pub id: i64,
@@ -134,6 +130,7 @@ pub struct Stop {
 
 // LEG
 #[derive(Copy, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Leg {
     pub id: i64,
     #[serde(default)]
@@ -182,6 +179,7 @@ pub fn get_route_status(idx: i32) -> RouteStatus {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
 pub struct Route {
 	pub id: i64,
     pub status: RouteStatus,

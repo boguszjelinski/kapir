@@ -66,7 +66,7 @@ pub async fn select_route(c: Client, id: i64) -> Route {
             }
         }
         Err(err) => {
-            println!("{}", err);
+            //println!("{}", err);
             return Route { ..Default::default() }
         }
     }
@@ -74,7 +74,7 @@ pub async fn select_route(c: Client, id: i64) -> Route {
 
 pub async fn select_order(c: Client, id: i64) -> Order {
     let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, \
-                received, started, completed, at_time, eta, status, cab_id, cust_id FROM taxi_order WHERE id=$1".to_string();
+                received, started, completed, at_time, eta, status, cab_id, customer_id FROM taxi_order WHERE id=$1".to_string();
     match c.query_one(&sql, &[&id]).await {
         Ok(row) => {
             let mut o = Order {
@@ -124,15 +124,12 @@ pub async fn insert_order(c: Client, o: Order) -> Order {
         println!("a joker");
         return Order{ ..Default::default() }
     }
-    //let date_as_string = &Utc::now().to_string()[..19];
-    //let time_now =  chrono::NaiveDateTime::No;
-    //println!("{}", date_as_string);
     let sql = "INSERT INTO taxi_order (from_stand, to_stand, max_loss, max_wait, shared, in_pool, eta,\
                     status, received, distance, customer_id) VALUES ($1,$2,$3,$4,$5,false,-1,$6,$7,$8,$9) RETURNING (id)".to_string(); 
     let dist: i32;
     unsafe { dist = DIST[o.from as usize][o.to as usize] as i32; }
     match c.query_one(&sql, &[
-        &o.from, &o.to, &o.loss, &o.wait, &o.shared, &(OrderStatus::ASSIGNED as i32), &(SystemTime::now()), 
+        &o.from, &o.to, &o.loss, &o.wait, &o.shared, &(OrderStatus::RECEIVED as i32), &(SystemTime::now()), 
         &dist, &o.cust_id]).await {
         Ok(row) => {
             let mut ret: Order = o.clone();
