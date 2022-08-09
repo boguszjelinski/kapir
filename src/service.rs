@@ -26,8 +26,16 @@ pub async fn update_cab(c: Client, cab: Cab) -> Cab {
 }
 
 pub async fn update_leg(c: Client, leg: Leg) -> Leg {
-    let sql = "UPDATE leg SET status=$1 WHERE id=$2".to_string(); 
-    check_result(c.execute(&sql, &[&(leg.status as i32), &leg.id]).await);
+    if leg.status == RouteStatus::STARTED { 
+        let sql = "UPDATE leg SET status=$1, started=$2 WHERE id=$3".to_string();
+        check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id]).await);
+    } else if leg.status == RouteStatus::COMPLETED { 
+        let sql = "UPDATE leg SET status=$1, completed=$2 WHERE id=$3".to_string();
+        check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id]).await);
+    } else { 
+        let sql = "UPDATE leg SET status=$1 WHERE id=$3".to_string();
+        check_result(c.execute(&sql, &[&(leg.status as i32), &leg.id]).await);
+    }
     return leg.clone();
 }
 
@@ -65,7 +73,7 @@ pub async fn select_route(c: Client, id: i64) -> Route {
                 legs: legs
             }
         }
-        Err(err) => {
+        Err(_err) => {
             //println!("{}", err);
             return Route { ..Default::default() }
         }
@@ -114,8 +122,18 @@ pub async fn select_order(c: Client, id: i64) -> Order {
 } 
 
 pub async fn update_order(c: Client, order: Order) -> Order {
-    let sql = "UPDATE taxi_order SET status=$1 WHERE id=$2".to_string(); 
-    check_result(c.execute(&sql, &[&(order.status as i32), &order.id]).await);
+    if order.status == OrderStatus::PICKEDUP {
+        let sql = "UPDATE taxi_order SET status=$1, started=$2 WHERE id=$3".to_string(); 
+        check_result(c.execute(&sql, &[&(order.status as i32), &(SystemTime::now()), &order.id]).await);
+    } else if order.status == OrderStatus::COMPLETED {
+        let sql = "UPDATE taxi_order SET status=$1, completed=$2 WHERE id=$3".to_string(); 
+        check_result(c.execute(&sql, &[&(order.status as i32), &(SystemTime::now()), &order.id]).await);
+    } else {
+        let sql = "UPDATE taxi_order SET status=$1 WHERE id=$2".to_string(); 
+        check_result(c.execute(&sql, &[&(order.status as i32), &order.id]).await);
+    }
+
+
     return order.clone();
 }
 

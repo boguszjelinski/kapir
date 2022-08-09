@@ -68,7 +68,7 @@ pub struct Order {
 }
 
 #[repr(i32)]
-#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub enum OrderStatus {
     RECEIVED = 0,
 	ASSIGNED = 1,
@@ -151,7 +151,7 @@ pub struct Leg {
 }
 
 #[repr(i32)]
-#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub enum RouteStatus {
     PLANNED = 0,   // proposed by Pool
     ASSIGNED = 1,  // not confirmed, initial status
