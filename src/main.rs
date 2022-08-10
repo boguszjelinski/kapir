@@ -1,3 +1,4 @@
+use std::env;
 use std::future::Future;
 use derive_more::{Display, From};
 use actix_web::{get,put, post, web, App, HttpServer, HttpResponse, Result, Error}; // Responder
@@ -36,10 +37,17 @@ impl std::error::Error for MyError {}
 
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    
+    let args: Vec<String> = env::args().collect();
+    let dbhost: String = if args.len() >1  { args[1].to_string() } 
+                        else { String::from("localhost") };
+    let bind_host: String = if args.len() >2  { args[2].to_string() } 
+                        else { String::from("192.168.10.178") };
+
     setup_logger("kapi.log".to_string());
 
     let mut pg_config = tokio_postgres::Config::new();
-    pg_config.host("localhost");
+    pg_config.host(&dbhost);
     pg_config.user("kabina");
     pg_config.password("kaboot");
     pg_config.dbname("kabina");
@@ -71,7 +79,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_stops) // curl -u cab2:cab2 http://localhost:8080/stops
             .service(get_stops2)
     })
-    .bind(("192.168.10.178", 8080))?
+    .bind((bind_host, 8080))?
     .run()
     .await
 }
