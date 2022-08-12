@@ -44,7 +44,7 @@ pub struct Order {
 	pub wait: i32,
 	pub loss: i32,
     #[serde(default)]
-	pub dist: i32,
+	pub distance: i32,
     #[serde(default)]
     pub shared: bool,
     #[serde(default)]
@@ -98,7 +98,7 @@ impl Default for Order {
             to: -1,
             wait: 0,
             loss: 0,
-            dist: 0,
+            distance: 0,
             shared: false,
             in_pool: false,
             received: None,

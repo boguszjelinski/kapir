@@ -42,7 +42,7 @@ async fn main() -> std::io::Result<()> {
     let dbhost: String = if args.len() >1  { args[1].to_string() } 
                         else { String::from("localhost") };
     let bind_host: String = if args.len() >2  { args[2].to_string() } 
-                        else { String::from("192.168.10.178") };
+                        else { String::from("localhost") };
 
     setup_logger("kapi.log".to_string());
 
@@ -68,8 +68,8 @@ async fn main() -> std::io::Result<()> {
             .service(get_order) // curl -u cab2:cab2 http://localhost:8080/orders/51150
             .service(put_order) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":51150, "status":"ASSIGNED"}' http://localhost:8080/orders
             .service(put_order2)
-            .service(post_order) //curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u "cust28:cust28" -d '{"fromStand":4082, "toStand":4083, "maxWait":10, "maxLoss":90, "shared": true}' http://localhost:8080/orders
-            .service(post_order2) // {"Id":-1,"fromStand":1363,"toStand":1362,"Eta":0,"InPool":true,"Cab":{"Id":0,"Location":0,"Status":"","Name":""},"Status":"RECEIVED","MaxWait":15,"MaxLoss":50,"Distance":0}
+            .service(post_order) //curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u "cust28:cust28" -d '{"From":4001, "To":4002, "Wait":10, "Loss":90, "Shared": true}' http://localhost:8080/orders
+            .service(post_order2) 
             .service(put_leg) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":17081, "status":"STARTED"}' http://localhost:8080/legs
             .service(put_leg2)
             .service(put_route) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":9724, "status":"ASSIGNED"}' http://localhost:8080/routes

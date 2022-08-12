@@ -91,7 +91,7 @@ pub async fn select_order(c: Client, id: i64) -> Order {
                 to: row.get(1),
                 wait: row.get(2),
                 loss: row.get(3),
-                dist: row.get(4),
+                distance: row.get(4),
                 shared: row.get(5),
                 in_pool: row.get(6),
                 received: row.get::<usize,Option<SystemTime>>(7),
@@ -151,6 +151,7 @@ pub async fn insert_order(c: Client, o: Order) -> Order {
         &dist, &o.cust_id]).await {
         Ok(row) => {
             let mut ret: Order = o.clone();
+            ret.distance = dist;
             ret.id = row.get(0);
             return ret;
         }
