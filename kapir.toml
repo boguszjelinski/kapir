@@ -1,0 +1,5 @@
+dbhost = "localhost"
+dbuser = "kabina"
+dbpass = "kaboot"
+dbname = "kabina"
+myhost = "localhost"

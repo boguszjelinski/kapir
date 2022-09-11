@@ -1,5 +1,6 @@
 use std::env;
 use std::future::Future;
+use std::collections::HashMap;
 use derive_more::{Display, From};
 use actix_web::{get,put, post, web, App, HttpServer, HttpResponse, Result, Error}; // Responder
 use actix_web_httpauth::extractors::basic::BasicAuth;
@@ -38,19 +39,42 @@ impl std::error::Error for MyError {}
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
     
+    let mut dbhost: String;
+    let dbuser: String;
+    let dbpass: String;
+    let dbname: String;
+    let mut bind_host: String;
+
+    let settings = config::Config::builder()
+        .add_source(config::File::with_name("kapir.toml"))
+        .build()
+        .unwrap();
+    let cfg = settings
+        .try_deserialize::<HashMap<String, String>>()
+        .unwrap();
+    dbhost = cfg["dbhost"].clone();
+    dbuser = cfg["dbuser"].clone();
+    dbpass = cfg["dbpass"].clone();
+    dbname = cfg["dbname"].clone();
+    bind_host = cfg["myhost"].clone();
+
+    // possible to overwrite config file
     let args: Vec<String> = env::args().collect();
-    let dbhost: String = if args.len() >1  { args[1].to_string() } 
-                        else { String::from("localhost") };
-    let bind_host: String = if args.len() >2  { args[2].to_string() } 
-                        else { String::from("localhost") };
+    if args.len() >1  { 
+        dbhost = args[1].to_string(); 
+    } 
+    if args.len() >2  { 
+        bind_host = args[2].to_string(); 
+    }
 
     setup_logger("kapi.log".to_string());
 
     let mut pg_config = tokio_postgres::Config::new();
     pg_config.host(&dbhost);
-    pg_config.user("kabina");
-    pg_config.password("kaboot");
-    pg_config.dbname("kabina");
+    pg_config.user(&dbuser);
+    pg_config.password(&dbpass);
+    pg_config.dbname(&dbname);
+
     let mgr_config = ManagerConfig {
         recycling_method: RecyclingMethod::Fast
     };
