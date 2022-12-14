@@ -3,8 +3,7 @@ use crate::model::{Stop};
 pub const MAXSTOPSNUMB : usize = 5200;
 pub const CAB_SPEED : i16 = 60; // km/h
 
-pub static mut STOPS : [Stop; MAXSTOPSNUMB] = [Stop {id: 0, latitude: 0.0, longitude: 0.0, bearing: 0}; MAXSTOPSNUMB];
-pub static mut STOPS_LEN: usize = 0;
+pub static mut STOPS : Vec<Stop> = vec![];
 pub static mut DIST : [[i16; MAXSTOPSNUMB]; MAXSTOPSNUMB] = [[0; MAXSTOPSNUMB]; MAXSTOPSNUMB];
 const M_PI : f64 = 3.14159265358979323846264338327950288;
 const M_PI_180 : f64 = M_PI / 180.0;
@@ -25,17 +24,17 @@ fn dist(lat1:f64, lon1:f64, lat2: f64, lon2: f64) -> f64 {
     return dist;
 }
 
-pub fn init_distance(stops: & Vec<Stop>) {
+pub fn init_distance() {
     unsafe {
-    for i in 0 .. stops.len() {
+    for i in 0 .. STOPS.len() {
         DIST[i][i] = 0;
-        for j in i+1 .. stops.len() {
-            let mut d = dist(stops[i].latitude, stops[i].longitude, stops[j].latitude, stops[j].longitude) 
+        for j in i+1 .. STOPS.len() {
+            let mut d = dist(STOPS[i].latitude, STOPS[i].longitude, STOPS[j].latitude, STOPS[j].longitude) 
                          * (60.0 / CAB_SPEED as f64);
             if d as i16 == 0 { d = 1.0; } // a transfer takes at least one minute. 
-            DIST[stops[i].id as usize][stops[j].id as usize] = d as i16; // TASK: we might need a better precision - meters/seconds
-            DIST[stops[j].id as usize][stops[i].id as usize] 
-                = DIST[stops[i].id as usize][stops[j].id as usize];
+            DIST[STOPS[i].id as usize][STOPS[j].id as usize] = d as i16; // TASK: we might need a better precision - meters/seconds
+            DIST[STOPS[j].id as usize][STOPS[i].id as usize] 
+                = DIST[STOPS[i].id as usize][STOPS[j].id as usize];
         }
     }
     }

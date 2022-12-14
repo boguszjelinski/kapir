@@ -3,3 +3,4 @@ dbuser = "kabina"
 dbpass = "kaboot"
 dbname = "kabina"
 myhost = "localhost"
+myport = 8080

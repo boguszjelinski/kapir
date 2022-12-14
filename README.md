@@ -2,7 +2,14 @@
 
 Kabina Rest API in Rust
 
-## Compile and run
+## Build and run
+Firstly you need the database schema, consult [Kern](https://gitlab.com/kabina/kern) documentation. Clone Kern's repository and run (adjust the user, password and schema):
+```
+cd sql
+psql -U kabina kabina < create.sql
+psql -U kabina -c "COPY stop(id, no, name, latitude, longitude, bearing) FROM 'stops-Budapest-import.csv' DELIMITER ',' CSV HEADER ENCODING 'UTF8';"
+```
+
 Make changes in *kapir.toml* (myhost is where API binds to, helps with serving external requests), then run:
 ```
 ulimit -n 100000
@@ -25,3 +32,4 @@ The following endpoints are available now with described purposes:
 | /routes | GET | get ONE route that a cab should follow with all legs | {    "id": 422127,    "status": "ASSIGNED",    "cab": {        "id": 165,        "location": 10,        "status": "FREE",        "hibernateLazyInitializer": {}    },    "legs": [        {            "id": 422128,            "fromStand": 15,            "toStand": 14,            "place": 0,            "status": "COMPLETED",            "route": null        },        {            "id": 422131,            "fromStand": 12,            "toStand": 10,            "place": 3,            "status": "COMPLETE",            "route": null        },        {            "id": 422130,            "fromStand": 13,            "toStand": 12,            "place": 2,            "status": "COMPLETE",            "route": null        },        {            "id": 422129,            "fromStand": 14,            "toStand": 13,            "place": 1,            "status": "COMPLETE",            "route": null        }    ]}
 | /routes | PUT | mark as completed  | { "status": "completed" }
 | /legs | PUT | mark as completed  | { "status": "completed" }
+| /stops | GET | get all stops | [{"id":0,"bearing":180,"latitude":47.507803,"longitude":19.235276},{"id": ...

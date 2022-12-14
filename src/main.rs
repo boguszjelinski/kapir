@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use derive_more::{Display, From};
 use actix_web::{get,put, post, web, App, HttpServer, HttpResponse, Result, Error}; // Responder
 use actix_web_httpauth::extractors::basic::BasicAuth;
+use actix_cors::Cors;
 use deadpool_postgres::{Client, Manager, ManagerConfig, Pool, PoolError, RecyclingMethod};
 use tokio_postgres::NoTls;
 use tokio_postgres::error::Error as PGError;
@@ -20,12 +21,13 @@ use log4rs::{
     filter::threshold::ThresholdFilter,
 };
 mod service;
-use service::{select_cab, select_order, update_cab, update_order, insert_order, 
-            init_read_stops, select_stops, update_leg, update_route, select_route};
+use service::{select_cab, select_order, update_cab, update_order, insert_order, select_orders,
+            init_read_stops, update_leg, update_route, select_route};
 mod model;
 use model::{Cab, Order, Leg, Route};
 mod distance;
 use distance::{init_distance};
+use crate::distance::STOPS;
 
 #[derive(Display, From, Debug)]
 pub enum MyError {
@@ -44,6 +46,7 @@ async fn main() -> std::io::Result<()> {
     let dbpass: String;
     let dbname: String;
     let mut bind_host: String;
+    let bind_port: u16;
 
     let settings = config::Config::builder()
         .add_source(config::File::with_name("kapir.toml"))
@@ -57,6 +60,7 @@ async fn main() -> std::io::Result<()> {
     dbpass = cfg["dbpass"].clone();
     dbname = cfg["dbname"].clone();
     bind_host = cfg["myhost"].clone();
+    bind_port = cfg["myport"].clone().parse::<u16>().unwrap();
 
     // possible to overwrite config file
     let args: Vec<String> = env::args().collect();
@@ -82,15 +86,19 @@ async fn main() -> std::io::Result<()> {
     let pool = Pool::new(mgr, 16);
 
     init_dist_service(&pool).await;
-  
+
     HttpServer::new(move || {
+        let cors = Cors::permissive();
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            .wrap(cors)
             .service(put_cab) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":2, "location": 123, "status":"FREE", "name":"A2"}' http://localhost:8080/cabs
             .service(put_cab2) // {"Id":0,"Location":0,"Status":"FREE","Name":""}
             .service(get_cab) // curl -u cab1:cab1 http://localhost:8080/cabs/1916
             .service(get_order) // curl -u cab2:cab2 http://localhost:8080/orders/51150
-            .service(put_order) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":51150, "status":"ASSIGNED"}' http://localhost:8080/orders
+            .service(get_order2) // curl -u cab2:cab2 http://localhost:8080/orders
+            .service(get_order3) // curl -u cab2:cab2 http://localhost:8080/orders/
+            .service(put_order) // curl -H "Content-type: application/json" -X PUT -u cust1:cust1 -d '{ "id":775791, "status":"ASSIGNED", "From":0,"To":0,"Wait":0,"Loss":0}' http://localhost:8080/orders
             .service(put_order2)
             .service(post_order) //curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u "cust28:cust28" -d '{"From":4001, "To":4002, "Wait":10, "Loss":90, "Shared": true}' http://localhost:8080/orders
             .service(post_order2) 
@@ -103,7 +111,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_stops) // curl -u cab2:cab2 http://localhost:8080/stops
             .service(get_stops2)
     })
-    .bind((bind_host, 8080))?
+    .bind((bind_host, bind_port))?
     .run()
     .await
 }
@@ -111,8 +119,8 @@ async fn main() -> std::io::Result<()> {
 async fn init_dist_service(pool: &Pool) {
     match pool.get().await.map_err(MyError::PoolError) {
         Ok(c) => {
-            let stops = init_read_stops(c).await;
-            init_distance(&stops);
+            init_read_stops(c).await;
+            init_distance();
         }
         Err(err) => {
             panic!("Distance service could not start {}", err);
@@ -171,6 +179,16 @@ async fn get_order(id: web::Path<i64>, auth: BasicAuth, db_pool: web::Data<Pool>
     return get_object(myid, db_pool, select_order).await;
 }
 
+#[get("/orders")]
+async fn get_order2(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return just_get_orders(auth, db_pool).await;
+}
+
+#[get("/orders/")]
+async fn get_order3(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return just_get_orders(auth, db_pool).await;
+}
+
 #[put("/orders")]
 async fn put_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     return just_put_order(obj, auth, db_pool).await;
@@ -191,11 +209,11 @@ async fn post_order2(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<
 
 #[get("/stops")]
 async fn get_stops() -> Result<HttpResponse, Error> {
-    return Ok(HttpResponse::Ok().json(select_stops().await));
+    return Ok(HttpResponse::Ok().json(unsafe { STOPS.clone()}));
 }
 #[get("/stops/")]
 async fn get_stops2() -> Result<HttpResponse, Error> {
-    return Ok(HttpResponse::Ok().json(select_stops().await));
+    return Ok(HttpResponse::Ok().json(unsafe { STOPS.clone()}));
 }
 
 async fn just_put_cab(obj: web::Json<Cab>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
@@ -212,7 +230,12 @@ async fn just_put_leg(obj: web::Json<Leg>, auth: BasicAuth, db_pool: web::Data<P
 
 async fn just_get_route(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     info!("GET route usr_id={}", auth.user_id());
-    return get_object2(get_auth_id(auth.user_id()), db_pool, select_route).await;
+    return get_object(get_auth_id(auth.user_id()), db_pool, select_route).await; // get_object2
+}
+
+async fn just_get_orders(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    info!("GET orders usr_id={}", auth.user_id());
+    return get_object(get_auth_id(auth.user_id()), db_pool, select_orders).await; // get_object2
 }
 
 async fn just_put_route(obj: web::Json<Route>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
@@ -242,10 +265,13 @@ where Fut: Future<Output = T>, T: Serialize {
             let obj: T = f(c, myid).await as T;
             return Ok(HttpResponse::Ok().json(obj));
         }
-        Err(err) => { return Ok(HttpResponse::Ok().json(format!("{}", err))); }
+        Err(err) => { 
+            return Ok(HttpResponse::Ok().insert_header(("Access-Control-Allow-Origin","*")).json(format!("{}", err))); 
+        }
     };
 }
 
+/*
 async fn get_object2<Fut, T>(myid: i64, db_pool: web::Data<Pool>, f: impl FnOnce(Client, i64) -> Fut) 
             -> Result<HttpResponse, Error>
 where Fut: Future<Output = T>, T: Serialize {
@@ -257,6 +283,7 @@ where Fut: Future<Output = T>, T: Serialize {
         Err(err) => { return Ok(HttpResponse::Ok().json(format!("{}", err))); }
     };
 }
+*/
 
 async fn update_object<Fut, T>(o: T, db_pool: web::Data<Pool>, f: impl FnOnce(Client, T) -> Fut) 
             -> Result<HttpResponse, Error>

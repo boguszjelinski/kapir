@@ -1,4 +1,5 @@
-use std::{time::SystemTime, fmt};
+use std::{fmt, time::SystemTime};
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
@@ -52,13 +53,13 @@ pub struct Order {
     #[serde(default)]
     pub status: OrderStatus,
     #[serde(default)]
-    pub received: Option<SystemTime>,
+    pub received: Option<DateTime<Local>>,
     #[serde(default)]
-    pub started: Option<SystemTime>,
+    pub started: Option<DateTime<Local>>,
     #[serde(default)]
-    pub completed: Option<SystemTime>,
+    pub completed: Option<DateTime<Local>>,
     #[serde(default)]
-    pub at_time: Option<SystemTime>,
+    pub at_time: Option<DateTime<Local>>,
     #[serde(default)]
     pub eta: i32,
     #[serde(default)]
@@ -120,12 +121,13 @@ impl fmt::Display for OrderStatus {
 }
 
 // STOP
-#[derive(Copy, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Stop {
     pub id: i64,
     pub bearing: i32,
 	pub latitude: f64,
-    pub longitude: f64
+    pub longitude: f64,
+    pub name: Option<String>,
 }
 
 // LEG
