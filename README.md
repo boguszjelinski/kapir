@@ -18,6 +18,8 @@ cargo run --release
 ```
 The *ulimit* command helps under heavy load, number has to be adjusted to needs. 
 
+See [readme](https://gitlab.com/kabina/kern/-/blob/master/RUNME.md) how to run all Kabina components in a simulation.
+
 ## Endpoints
 The following endpoints are available now with described purposes:
 
