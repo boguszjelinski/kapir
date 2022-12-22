@@ -145,9 +145,7 @@ pub struct Leg {
     pub place: i32,
     #[serde(default)]
     pub dist: i32,
-    #[serde(default)]
     pub started: Option<SystemTime>,
-    #[serde(default)]
     pub completed: Option<SystemTime>,
     pub status: RouteStatus
 }
@@ -174,7 +172,6 @@ impl fmt::Display for RouteStatus {
     }
 }
 
-
 pub fn get_route_status(idx: i32) -> RouteStatus {
     let s: RouteStatus = unsafe { ::std::mem::transmute(idx) };
     return s
@@ -186,11 +183,44 @@ pub struct Route {
 	pub id: i64,
     pub status: RouteStatus,
     #[serde(default)]
-    pub legs: Vec<Leg>
+    pub legs: Vec<Leg>,
+    pub cab: Cab
 }
 
 impl Default for Route {
     fn default() -> Route {
-        Route { id: -1, status: RouteStatus::REJECTED, legs: vec![] } 
+        Route { id: -1, status: RouteStatus::REJECTED, legs: vec![], cab: Cab { ..Default::default() } } 
     }
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct RouteWithOrders {
+    pub route: Route,
+    pub orders: Vec<Order>
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct StopTraffic {
+    pub stop: Option<Stop>,
+    pub routes: Vec<RouteWithEta>,
+    pub cabs: Vec<Cab>
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct RouteWithEta {
+    pub eta: i16,
+    pub route: Route
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct Stats {
+    pub kpis: Vec<Stat>,
+    pub orders: Vec<Stat>,
+    pub cabs: Vec<Stat>
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct Stat {
+    pub name: String,
+    pub int_val: i32
 }

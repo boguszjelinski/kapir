@@ -22,12 +22,12 @@ use log4rs::{
 };
 mod service;
 use service::{select_cab, select_order, update_cab, update_order, insert_order, select_orders,
-            init_read_stops, update_leg, update_route, select_route};
+            init_read_stops, update_leg, update_route, select_route_by_cab, select_traffik, select_stats};
 mod model;
 use model::{Cab, Order, Leg, Route};
 mod distance;
 use distance::{init_distance};
-use crate::distance::STOPS;
+use crate::{distance::STOPS, service::select_route_with_orders};
 
 #[derive(Display, From, Debug)]
 pub enum MyError {
@@ -108,8 +108,12 @@ async fn main() -> std::io::Result<()> {
             .service(put_route2)
             .service(get_route) // curl -u cab2:cab2 http://localhost:8080/routes
             .service(get_route2)
+            .service(get_route_with_orders)
+            .service(get_route_with_orders2)
             .service(get_stops) // curl -u cab2:cab2 http://localhost:8080/stops
             .service(get_stops2)
+            .service(get_traffic)
+            .service(get_stats)
     })
     .bind((bind_host, bind_port))?
     .run()
@@ -161,6 +165,14 @@ async fn get_route(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResp
 #[get("/routes/")] // id will come from auth
 async fn get_route2(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     return just_get_route(auth, db_pool).await;
+}
+#[get("/routeswithorders")] // just to keep compatibility with Java
+async fn get_route_with_orders(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return just_get_route_with_orders(auth, db_pool).await;
+}
+#[get("/routeswithorders/")] // just to keep compatibility with Java
+async fn get_route_with_orders2(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return just_get_route_with_orders(auth, db_pool).await;
 }
 
 #[put("/routes")]
@@ -216,6 +228,19 @@ async fn get_stops2() -> Result<HttpResponse, Error> {
     return Ok(HttpResponse::Ok().json(unsafe { STOPS.clone()}));
 }
 
+#[get("/stops/{id}/traffic")]
+async fn get_traffic(id: web::Path<i64>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> { // -> impl Responder
+    let myid: i64 = id.abs(); // TODO: how to unwrap?
+    info!("GET traffik for stop={} usr_id={}", myid, auth.user_id());
+    return get_object(myid, db_pool, select_traffik).await;
+}
+
+#[get("/stats")]
+async fn get_stats(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> { // -> impl Responder
+    info!("GET stats for usr_id={}", auth.user_id());
+    return get_object(get_auth_id(auth.user_id()), db_pool, select_stats).await;
+}
+
 async fn just_put_cab(obj: web::Json<Cab>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let o: Cab = obj.into_inner();
     info!("PUT cab cab_id={} status={} location={} usr_id={}", o.id, o.status, o.location, auth.user_id());
@@ -230,7 +255,11 @@ async fn just_put_leg(obj: web::Json<Leg>, auth: BasicAuth, db_pool: web::Data<P
 
 async fn just_get_route(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     info!("GET route usr_id={}", auth.user_id());
-    return get_object(get_auth_id(auth.user_id()), db_pool, select_route).await; // get_object2
+    return get_object(get_auth_id(auth.user_id()), db_pool, select_route_by_cab).await; // get_object2
+}
+async fn just_get_route_with_orders(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    info!("GET route with orders usr_id={}", auth.user_id());
+    return get_object(get_auth_id(auth.user_id()), db_pool, select_route_with_orders).await;
 }
 
 async fn just_get_orders(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
@@ -259,7 +288,7 @@ async fn just_post_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::D
 
 async fn get_object<Fut, T>(myid: i64, db_pool: web::Data<Pool>, f: impl FnOnce(Client, i64) -> Fut) 
             -> Result<HttpResponse, Error>
-where Fut: Future<Output = T>, T: Serialize {
+            where Fut: Future<Output = T>, T: Serialize {
     match db_pool.get().await.map_err(MyError::PoolError) {
         Ok(c) => {
             let obj: T = f(c, myid).await as T;
@@ -287,7 +316,7 @@ where Fut: Future<Output = T>, T: Serialize {
 
 async fn update_object<Fut, T>(o: T, db_pool: web::Data<Pool>, f: impl FnOnce(Client, T) -> Fut) 
             -> Result<HttpResponse, Error>
-where Fut: Future<Output = T>, T: Serialize { 
+            where Fut: Future<Output = T>, T: Serialize { 
     match db_pool.get().await.map_err(MyError::PoolError) {
         Ok(c) => {
             let obj: T = f(c, o).await as T;
