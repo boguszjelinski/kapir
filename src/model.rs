@@ -65,7 +65,15 @@ pub struct Order {
     #[serde(default)]
     pub cab: Cab,
     #[serde(default)]
-    pub cust_id: i64
+    pub cust_id: i64,
+    #[serde(default)]
+    pub route_id: i64,
+    #[serde(default)]
+    pub leg_id: i64,
+//    #[serde(default)]
+//    pub route: Route,
+//    #[serde(default)]
+//    pub leg: Leg,
 }
 
 #[repr(i32)]
@@ -109,6 +117,10 @@ impl Default for Order {
             eta: 0,
             status: OrderStatus::REFUSED,
             cab: Cab { id: -1, location: -1, status: CabStatus::CHARGING },
+            route_id: -1,
+            leg_id: -1,
+        //    route: Route { ..Default::default() },
+        //    leg: Leg { ..Default::default()}, 
             cust_id: -1,
         }
     }

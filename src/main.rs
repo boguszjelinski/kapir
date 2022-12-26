@@ -22,7 +22,7 @@ use log4rs::{
 };
 mod service;
 use service::{select_cab, select_order, update_cab, update_order, insert_order, select_orders,
-            init_read_stops, update_leg, update_route, select_route_by_cab, select_traffik, select_stats};
+            init_read_stops, update_leg, update_route, select_route_by_id, select_route_by_cab, select_traffik, select_stats};
 mod model;
 use model::{Cab, Order, Leg, Route};
 mod distance;
@@ -108,6 +108,7 @@ async fn main() -> std::io::Result<()> {
             .service(put_route2)
             .service(get_route) // curl -u cab2:cab2 http://localhost:8080/routes
             .service(get_route2)
+            .service(get_route_by_id)
             .service(get_route_with_orders)
             .service(get_route_with_orders2)
             .service(get_stops) // curl -u cab2:cab2 http://localhost:8080/stops
@@ -156,6 +157,13 @@ async fn put_leg(obj: web::Json<Leg>, auth: BasicAuth, db_pool: web::Data<Pool>)
 #[put("/legs/")]
 async fn put_leg2(obj: web::Json<Leg>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     return just_put_leg(obj, auth, db_pool).await;
+}
+
+#[get("/routes/{id}")]
+async fn get_route_by_id(id: web::Path<i64>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    let myid: i64 = id.abs(); // TODO: how to unwrap?
+    info!("GET route route_id={} usr_id={}", myid, auth.user_id());
+    return get_object(myid, db_pool, select_route_by_id).await;
 }
 
 #[get("/routes")] // id will come from auth

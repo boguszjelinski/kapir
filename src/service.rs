@@ -78,6 +78,10 @@ pub async fn select_route_by_cab_ref(c: &Client, id: i64) -> Route {
     }
 } 
 
+pub async fn select_route_by_id(c: Client, id: i64) -> Route {
+    return select_route_ref(&c, id).await;
+}
+
 pub async fn select_route_ref(c: &Client, id: i64) -> Route {
     let mut legs: Vec<Leg> = vec![];
     // TODO: maybe a join and one DB call?
@@ -150,27 +154,29 @@ pub async fn select_order(c: Client, id: i64) -> Order {
 } 
 
 pub async fn select_orders(c: Client, id: i64) -> Vec<Order> {
-    return select_orders_by_what(c, id, "customer_id=$1").await;
+    return select_orders_by_what(&c, id, "customer_id=$1").await;
 } 
 
 pub async fn select_orders_by_route(c: Client, id: i64) -> Vec<Order> {
-    return select_orders_by_what(c, id, "route_id=$1").await;
+    return select_orders_by_what(&c, id, "route_id=$1").await;
 } 
 
-pub async fn select_orders_by_what(c: Client, id: i64, clause: &str) -> Vec<Order> {
-    let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool,\
-        received, started, completed, at_time, eta, o.status, cab_id, customer_id, o.id, c.location, c.status \
+pub async fn select_orders_by_what(c: &Client, id: i64, clause: &str) -> Vec<Order> {
+    let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, received, started, completed, \
+        at_time, eta, o.status, cab_id, customer_id, o.id, c.location, c.status, route_id, leg_id \
         FROM taxi_order as o LEFT JOIN cab as c ON o.cab_id = c.id
-        WHERE ".to_string() + clause + " AND o.status!=8 AND o.status!=3";
+        WHERE ".to_string() + clause + " AND (o.status<3 OR o.status>6)";
     let mut ret: Vec<Order> = Vec::new();
     for row in c.query(&sql, &[&id]).await.unwrap() {
+        // some basic info about an order
         let mut o: Order = build_order(row.get(15), &row); // TODO: these indices are ugly & errorprone
+        // assigned Cab
         let cab: Option<i64> = row.get(13);
         match cab {
-            Some(id) => { 
-                o.cab = Cab { id, location: row.get(16), status: get_cab_status(row.get(17)) };
+            Some(cab_id) => { 
+                o.cab = Cab { id: cab_id, location: row.get(16), status: get_cab_status(row.get(17)) };
             }
-            None => {
+            None => { // not assigned
                 // NULL
             }
         }
@@ -196,7 +202,9 @@ fn build_order(id: i64, row: &Row) -> Order {
         eta: row.get(11),
         status: get_order_status(row.get(12)),
         cab: Cab { id: -1, location: -1, status: CabStatus::CHARGING },
-        cust_id: row.get(14)
+        cust_id: row.get(14),
+        route_id: row.get(18),
+        leg_id: row.get(19),
     };
 }
 
