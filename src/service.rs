@@ -250,6 +250,7 @@ pub async fn insert_order(user_id: i64, c: Client, o: Order) -> Order {
             let mut ret: Order = o.clone();
             ret.distance = dist;
             ret.id = row.get(0);
+            ret.received = Some(Local::now()); // it is not exactly the same as in DB but good enough for KPIs - client will send it back on PICKUP and COMPLETE
             return ret;
         }
         Err(err) => {
@@ -313,10 +314,10 @@ pub async fn select_stats(user_id: i64, c: Client, usr_id: i64) -> Stats {
         return Stats { kpis: vec![], orders: vec![], cabs: vec![] }
     }
     let sql = save_status();
-    match c.execute(&sql, &[]).await {
-        Ok(_) => { }
+    match c.batch_execute(&sql).await {
+        Ok(_) => {}
         Err(err) => {
-            println!("{}", err);
+            info!("Saving stats failed {}, err: {}", sql, err);
         }
     }
     return Stats { kpis: select_stats_kpis(&c).await, 
