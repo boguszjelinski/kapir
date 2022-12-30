@@ -28,6 +28,7 @@ use model::{Cab, Order, Leg, Route};
 mod distance;
 use distance::{init_distance};
 use crate::{distance::STOPS, service::select_route_with_orders};
+mod stats;
 
 #[derive(Display, From, Debug)]
 pub enum MyError {
@@ -92,7 +93,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .wrap(cors)
-            .service(put_cab) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":2, "location": 123, "status":"FREE", "name":"A2"}' http://localhost:8080/cabs
+            .service(put_cab) // curl -H "Content-type: application/json" -u cab2:cab2 -X PUT -d '{ "Id":2, "Location":123, "Status":"FREE"}' http://localhost:8080/cabs
             .service(put_cab2) // {"Id":0,"Location":0,"Status":"FREE","Name":""}
             .service(get_cab) // curl -u cab1:cab1 http://localhost:8080/cabs/1916
             .service(get_order) // curl -u cab2:cab2 http://localhost:8080/orders/51150
@@ -102,9 +103,9 @@ async fn main() -> std::io::Result<()> {
             .service(put_order2)
             .service(post_order) //curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u "cust28:cust28" -d '{"From":4001, "To":4002, "Wait":10, "Loss":90, "Shared": true}' http://localhost:8080/orders
             .service(post_order2) 
-            .service(put_leg) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":17081, "status":"STARTED"}' http://localhost:8080/legs
+            .service(put_leg) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "Id":17081, "Status":"STARTED"}' http://localhost:8080/legs
             .service(put_leg2)
-            .service(put_route) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "id":9724, "status":"ASSIGNED"}' http://localhost:8080/routes
+            .service(put_route) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X PUT -u cab1:cab1 -d '{ "Id":9724, "Status":"ASSIGNED"}' http://localhost:8080/routes
             .service(put_route2)
             .service(get_route) // curl -u cab2:cab2 http://localhost:8080/routes
             .service(get_route2)
@@ -138,7 +139,7 @@ async fn init_dist_service(pool: &Pool) {
 async fn get_cab(id: web::Path<i64>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> { // -> impl Responder
     let myid: i64 = id.abs(); // TODO: how to unwrap?
     info!("GET cab cab_id={} usr_id={}", myid, auth.user_id());
-    return get_object(myid, db_pool, select_cab).await;
+    return get_object(get_auth_id(auth.user_id()), myid, db_pool, select_cab).await;
 }
 
 #[put("/cabs")]
@@ -163,7 +164,7 @@ async fn put_leg2(obj: web::Json<Leg>, auth: BasicAuth, db_pool: web::Data<Pool>
 async fn get_route_by_id(id: web::Path<i64>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let myid: i64 = id.abs(); // TODO: how to unwrap?
     info!("GET route route_id={} usr_id={}", myid, auth.user_id());
-    return get_object(myid, db_pool, select_route_by_id).await;
+    return get_object(get_auth_id(auth.user_id()), myid, db_pool, select_route_by_id).await;
 }
 
 #[get("/routes")] // id will come from auth
@@ -196,7 +197,7 @@ async fn put_route2(obj: web::Json<Route>, auth: BasicAuth, db_pool: web::Data<P
 async fn get_order(id: web::Path<i64>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let myid: i64 = id.abs(); // TODO: how to unwrap?
     info!("GET order order_id={} usr_id={}", myid, auth.user_id());
-    return get_object(myid, db_pool, select_order).await;
+    return get_object(get_auth_id(auth.user_id()), myid, db_pool, select_order).await;
 }
 
 #[get("/orders")]
@@ -240,66 +241,86 @@ async fn get_stops2() -> Result<HttpResponse, Error> {
 async fn get_traffic(id: web::Path<i64>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> { // -> impl Responder
     let myid: i64 = id.abs(); // TODO: how to unwrap?
     info!("GET traffik for stop={} usr_id={}", myid, auth.user_id());
-    return get_object(myid, db_pool, select_traffik).await;
+    return get_object(get_auth_id(auth.user_id()), myid, db_pool, select_traffik).await;
 }
 
 #[get("/stats")]
 async fn get_stats(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> { // -> impl Responder
     info!("GET stats for usr_id={}", auth.user_id());
-    return get_object(get_auth_id(auth.user_id()), db_pool, select_stats).await;
+    let user_id:i64 = get_auth_id(auth.user_id());
+    return get_object(user_id, user_id, db_pool, select_stats).await;
 }
 
 async fn just_put_cab(obj: web::Json<Cab>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let o: Cab = obj.into_inner();
-    info!("PUT cab cab_id={} status={} location={} usr_id={}", o.id, o.status, o.location, auth.user_id());
-    return update_object(o, db_pool, update_cab).await;
+    // authorization
+    if auth.user_id() == format!("cab{}", o.id) {
+        info!("PUT cab cab_id={} status={} location={} usr_id={}", o.id, o.status, o.location, auth.user_id());
+        return update_object(get_auth_id(auth.user_id()), o, db_pool, update_cab).await;
+    }
+    info!("PUT cab FORBIDDEN cab_id={} status={} location={} usr_id={}", o.id, o.status, o.location, auth.user_id());
+    return Ok(HttpResponse::Forbidden().json("Not owner"));
 }
 
 async fn just_put_leg(obj: web::Json<Leg>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let o: Leg = obj.into_inner();
-    info!("PUT leg leg_id={} status={} usr_id={}", o.id, o.status, auth.user_id());
-    return update_object(o, db_pool, update_leg).await;
+    // authorization continues in service
+    if auth.user_id().starts_with("cab") {
+        info!("PUT leg leg_id={} status={} usr_id={}", o.id, o.status, auth.user_id());
+        return update_object(get_auth_id(auth.user_id()), o, db_pool, update_leg).await;
+    }
+    info!("PUT leg FORBIDDEN leg_id={} status={} usr_id={}", o.id, o.status, auth.user_id());
+    return Ok(HttpResponse::Forbidden().json("Only a cab is allowed to update a leg"));
 }
 
 async fn just_get_route(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     info!("GET route usr_id={}", auth.user_id());
-    return get_object(get_auth_id(auth.user_id()), db_pool, select_route_by_cab).await; // get_object2
+    let user_id:i64 = get_auth_id(auth.user_id());
+    return get_object(user_id, user_id, db_pool, select_route_by_cab).await; // get_object2
 }
 async fn just_get_route_with_orders(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     info!("GET route with orders usr_id={}", auth.user_id());
-    return get_object(get_auth_id(auth.user_id()), db_pool, select_route_with_orders).await;
+    let user_id:i64 = get_auth_id(auth.user_id());
+    return get_object(user_id, user_id, db_pool, select_route_with_orders).await;
 }
 
 async fn just_get_orders(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     info!("GET orders usr_id={}", auth.user_id());
-    return get_object(get_auth_id(auth.user_id()), db_pool, select_orders).await; // get_object2
+    let user_id:i64 = get_auth_id(auth.user_id());
+    return get_object(user_id, user_id, db_pool, select_orders).await; // get_object2
 }
 
 async fn just_put_route(obj: web::Json<Route>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let o: Route = obj.into_inner();
-    info!("PUT route route_id={} status={} usr_id={}", o.id, o.status, auth.user_id());
-    return update_object(o, db_pool, update_route).await;
+    // authorization continues in service
+    if auth.user_id().starts_with("cab") {
+        info!("PUT route route_id={} status={} usr_id={}", o.id, o.status, auth.user_id());
+        return update_object(get_auth_id(auth.user_id()), o, db_pool, update_route).await;
+    }
+    info!("PUT route FORBIDDEN route_id={} status={} usr_id={}", o.id, o.status, auth.user_id());
+    return Ok(HttpResponse::Forbidden().json("Only a cab is allowed to update a route"));
 }
 
 async fn just_put_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let o: Order = obj.into_inner();
     info!("PUT order order_id={} status={} usr_id={}", o.id, o.status, auth.user_id());
-    return update_object(o, db_pool, update_order).await;
+    return update_object(get_auth_id(auth.user_id()), o, db_pool, update_order).await;
 }
 
 async fn just_post_order(obj: web::Json<Order>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let mut o: Order = obj.into_inner();
     info!("POST order from={} to={} usr_id={}", o.from, o.to, auth.user_id());
-    o.cust_id = get_auth_id(auth.user_id());
-    return update_object(o, db_pool, insert_order).await;
+    let user_id:i64 = get_auth_id(auth.user_id());
+    o.cust_id = user_id; // authorisation ;)
+    return update_object(user_id, o, db_pool, insert_order).await;
 }
 
-async fn get_object<Fut, T>(myid: i64, db_pool: web::Data<Pool>, f: impl FnOnce(Client, i64) -> Fut) 
+async fn get_object<Fut, T>(user_id: i64, object_id: i64, db_pool: web::Data<Pool>, f: impl FnOnce(i64, Client, i64) -> Fut) 
             -> Result<HttpResponse, Error>
             where Fut: Future<Output = T>, T: Serialize {
     match db_pool.get().await.map_err(MyError::PoolError) {
         Ok(c) => {
-            let obj: T = f(c, myid).await as T;
+            let obj: T = f(user_id, c, object_id).await as T;
             return Ok(HttpResponse::Ok().json(obj));
         }
         Err(err) => { 
@@ -308,26 +329,12 @@ async fn get_object<Fut, T>(myid: i64, db_pool: web::Data<Pool>, f: impl FnOnce(
     };
 }
 
-/*
-async fn get_object2<Fut, T>(myid: i64, db_pool: web::Data<Pool>, f: impl FnOnce(Client, i64) -> Fut) 
-            -> Result<HttpResponse, Error>
-where Fut: Future<Output = T>, T: Serialize {
-    match db_pool.get().await.map_err(MyError::PoolError) {
-        Ok(c) => {
-            let obj: T = f(c, myid).await as T;
-            return Ok(HttpResponse::Ok().json(obj));
-        }
-        Err(err) => { return Ok(HttpResponse::Ok().json(format!("{}", err))); }
-    };
-}
-*/
-
-async fn update_object<Fut, T>(o: T, db_pool: web::Data<Pool>, f: impl FnOnce(Client, T) -> Fut) 
+async fn update_object<Fut, T>(user_id: i64, o: T, db_pool: web::Data<Pool>, f: impl FnOnce(i64, Client, T) -> Fut) 
             -> Result<HttpResponse, Error>
             where Fut: Future<Output = T>, T: Serialize { 
     match db_pool.get().await.map_err(MyError::PoolError) {
         Ok(c) => {
-            let obj: T = f(c, o).await as T;
+            let obj: T = f(user_id, c, o).await as T;
             return Ok(HttpResponse::Ok().json(obj));
         }
         Err(err) => { return Ok(HttpResponse::Ok().json(format!("{}", err))); }

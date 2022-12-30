@@ -3,11 +3,14 @@ use std::time::SystemTime;
 use chrono::{DateTime, Local};
 use deadpool_postgres::Client;
 use tokio_postgres::Row;
+use log::{debug, info};
 use crate::model::{Cab, CabStatus, Order, Stop, Leg, Route, RouteStatus, Stats, Stat,
         get_cab_status, get_order_status, get_route_status, OrderStatus, RouteWithOrders, RouteWithEta, StopTraffic};
 use crate::distance::{STOPS, DIST};
+use crate::stats::{add_avg_pickup, add_avg_complete, save_status};
 
-pub async fn select_cab(c: Client, id: i64) -> Cab {
+pub async fn select_cab(user_id: i64, c: Client, id: i64) -> Cab {
+    debug!("select_cab, user_id={}", user_id);
     let sql = "SELECT location, status FROM cab WHERE id=$1".to_string();
     match c.query_one(&sql, &[&id]).await {
         Ok(row) => {
@@ -23,7 +26,8 @@ pub async fn select_cab(c: Client, id: i64) -> Cab {
     }
 } 
 
-pub async fn select_cabs_by_stop(c: Client, stop_id: i32) -> Vec<Cab> {
+pub async fn select_cabs_by_stop(user_id: i64, c: Client, stop_id: i32) -> Vec<Cab> {
+    debug!("select_cabs_by_stop, user_id={}", user_id);
     let sql = "SELECT id, name FROM cab WHERE location=$1 AND status=1".to_string(); // 1=FREE
     let mut ret: Vec<Cab> = Vec::new();
     for row in c.query(&sql, &[&stop_id]).await.unwrap() {
@@ -32,33 +36,38 @@ pub async fn select_cabs_by_stop(c: Client, stop_id: i32) -> Vec<Cab> {
     return ret;
 } 
 
-pub async fn update_cab(c: Client, cab: Cab) -> Cab {
-    let sql = "UPDATE cab SET status=$1, location=$2 WHERE id=$3".to_string(); 
-    check_result(c.execute(&sql, &[&(cab.status as i32), &cab.location, &cab.id]).await);
+pub async fn update_cab(user_id: i64, c: Client, cab: Cab) -> Cab {
+    if user_id == cab.id {
+        let sql = "UPDATE cab SET status=$1, location=$2 WHERE id=$3".to_string(); 
+        check_result(c.execute(&sql, &[&(cab.status as i32), &cab.location, &cab.id]).await);
+    } else {
+        info!("update_cab not authorised, user_id={}, cab_id={}", user_id, cab.id);
+    }
     return cab.clone();
 }
 
-pub async fn update_leg(c: Client, leg: Leg) -> Leg {
+pub async fn update_leg(user_id: i64, c: Client, leg: Leg) -> Leg {
     if leg.status == RouteStatus::STARTED { 
-        let sql = "UPDATE leg SET status=$1, started=$2 WHERE id=$3".to_string();
-        check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id]).await);
+        let sql = "UPDATE leg l SET status=$1, started=$2 FROM route r WHERE id=$3 AND r.id=l.route_id AND r.cab_id=$4".to_string();
+        check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id, &user_id]).await);
     } else if leg.status == RouteStatus::COMPLETED { 
-        let sql = "UPDATE leg SET status=$1, completed=$2 WHERE id=$3".to_string();
-        check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id]).await);
+        let sql = "UPDATE leg l SET status=$1, completed=$2 FROM route r WHERE id=$3 AND r.id=l.route_id AND r.cab_id=$4".to_string();
+        check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id, &user_id]).await);
     } else { 
-        let sql = "UPDATE leg SET status=$1 WHERE id=$3".to_string();
-        check_result(c.execute(&sql, &[&(leg.status as i32), &leg.id]).await);
+        let sql = "UPDATE leg l SET status=$1 FROM route r WHERE id=$2 AND r.id=l.route_id AND r.cab_id=$3".to_string();
+        check_result(c.execute(&sql, &[&(leg.status as i32), &leg.id, &user_id]).await);
     }
     return leg.clone();
 }
 
-pub async fn update_route(c: Client, route: Route) -> Route {
-    let sql = "UPDATE route SET status=$1 WHERE id=$2".to_string(); 
-    check_result(c.execute(&sql, &[&(route.status as i32), &route.id]).await);
+pub async fn update_route(user_id: i64, c: Client, route: Route) -> Route {
+    let sql = "UPDATE route SET status=$1 WHERE id=$2 AND cab_id=$3".to_string(); 
+    check_result(c.execute(&sql, &[&(route.status as i32), &route.id, &user_id]).await);
     return route.clone();
 }
 
-pub async fn select_route_by_cab(c: Client, id: i64) -> Route {
+pub async fn select_route_by_cab(user_id: i64, c: Client, id: i64) -> Route {
+    debug!("select_route_by_cab, user={}", user_id);
     return select_route_by_cab_ref(&c, id).await;
 }
 
@@ -78,7 +87,8 @@ pub async fn select_route_by_cab_ref(c: &Client, id: i64) -> Route {
     }
 } 
 
-pub async fn select_route_by_id(c: Client, id: i64) -> Route {
+pub async fn select_route_by_id(user_id: i64, c: Client, id: i64) -> Route {
+    debug!("select_route_by_id, user={}", user_id);
     return select_route_ref(&c, id).await;
 }
 
@@ -123,42 +133,26 @@ pub async fn select_route_ref(c: &Client, id: i64) -> Route {
     }
 }
 
-pub async fn select_route_with_orders(c: Client, id: i64) -> RouteWithOrders {
+pub async fn select_route_with_orders(user_id: i64, c: Client, id: i64) -> RouteWithOrders {
     let route: Route = select_route_by_cab_ref(&c, id).await;
-    let orders: Vec<Order> = select_orders_by_route(c, route.id).await;
+    let orders: Vec<Order> = select_orders_by_route(user_id, c, route.id).await;
     return RouteWithOrders {route, orders};
 }
 
-pub async fn select_order(c: Client, id: i64) -> Order {
-    let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, \
-                received, started, completed, at_time, eta, status, cab_id, customer_id FROM taxi_order WHERE id=$1".to_string();
-    match c.query_one(&sql, &[&id]).await {
-        Ok(row) => {
-            let mut o = build_order(id, &row);
-            let cab: Option<i64> = row.get(13);
-            match cab {
-                Some(id) => { 
-                    o.cab = select_cab(c, id).await;
-                }
-                None => {
-                    // NULL
-                }
-            }
-            return o;
-        }
-        Err(err) => {
-            println!("{}", err);
-            return Order { ..Default::default() };
-        }
-    }
+pub async fn select_order(user_id: i64, c: Client, id: i64) -> Order {
+    debug!("select_order, user_id={}", user_id);
+    let orders: Vec<Order> = select_orders_by_what(&c, id, "o.id=$1").await;
+    return orders[0];
 } 
 
-pub async fn select_orders(c: Client, id: i64) -> Vec<Order> {
-    return select_orders_by_what(&c, id, "customer_id=$1").await;
+pub async fn select_orders(user_id: i64, c: Client, id: i64) -> Vec<Order> {
+    debug!("select_orders, user_id={}", user_id);
+    return select_orders_by_what(&c, id, "customer_id=$1 AND (o.status<3 OR o.status>6)").await;
 } 
 
-pub async fn select_orders_by_route(c: Client, id: i64) -> Vec<Order> {
-    return select_orders_by_what(&c, id, "route_id=$1").await;
+pub async fn select_orders_by_route(user_id: i64, c: Client, id: i64) -> Vec<Order> {
+    debug!("select_orders_by_route, user_id={}", user_id);
+    return select_orders_by_what(&c, id, "route_id=$1 AND (o.status<3 OR o.status>6)").await;
 } 
 
 pub async fn select_orders_by_what(c: &Client, id: i64, clause: &str) -> Vec<Order> {
@@ -215,25 +209,36 @@ fn systime_to_dttime(time: Option<SystemTime>) -> Option<DateTime<Local>> {
     }
 }
 
-pub async fn update_order(c: Client, order: Order) -> Order {
+pub async fn update_order(user_id: i64, c: Client, order: Order) -> Order {
     if order.status == OrderStatus::PICKEDUP {
-        let sql = "UPDATE taxi_order SET status=$1, started=$2 WHERE id=$3".to_string(); 
-        check_result(c.execute(&sql, &[&(order.status as i32), &(SystemTime::now()), &order.id]).await);
+        let sql = "UPDATE taxi_order SET status=$1, started=$2 WHERE id=$3 AND customer_id=$4".to_string(); 
+        check_result(c.execute(&sql, &[&(order.status as i32), &(SystemTime::now()), &order.id, &user_id]).await);
+        add_avg_pickup(get_elapsed_dt(order.received));
     } else if order.status == OrderStatus::COMPLETED {
-        let sql = "UPDATE taxi_order SET status=$1, completed=$2 WHERE id=$3".to_string(); 
-        check_result(c.execute(&sql, &[&(order.status as i32), &(SystemTime::now()), &order.id]).await);
+        let sql = "UPDATE taxi_order SET status=$1, completed=$2 WHERE id=$3 AND customer_id=$4".to_string(); 
+        check_result(c.execute(&sql, &[&(order.status as i32), &(SystemTime::now()), &order.id, &user_id]).await);
+        add_avg_complete(get_elapsed_dt(order.received));
     } else {
-        let sql = "UPDATE taxi_order SET status=$1 WHERE id=$2".to_string(); 
-        check_result(c.execute(&sql, &[&(order.status as i32), &order.id]).await);
+        let sql = "UPDATE taxi_order SET status=$1 WHERE id=$2 AND customer_id=$3".to_string(); 
+        check_result(c.execute(&sql, &[&(order.status as i32), &order.id, &user_id]).await);
     }
     return order.clone();
 }
 
-pub async fn insert_order(c: Client, o: Order) -> Order {
+pub async fn insert_order(user_id: i64, c: Client, o: Order) -> Order {
     if o.from == o.to {
         println!("a joker");
         return Order{ ..Default::default() }
+    } else if o.cust_id != user_id {
+        println!("a hacker");
+        return Order{ ..Default::default() }
     }
+    let orders = select_orders_by_what(&c, o.cust_id, "customer_id=$1 AND (o.status<3 OR o.status>6)").await;
+    if orders.len() > 0 {
+        println!("POST order failed for usr_id={}, orders exist", o.cust_id);
+        return Order { ..Default::default() }
+    }
+
     let sql = "INSERT INTO taxi_order (from_stand, to_stand, max_loss, max_wait, shared, in_pool, eta,\
                     status, received, distance, customer_id) VALUES ($1,$2,$3,$4,$5,false,-1,$6,$7,$8,$9) RETURNING (id)".to_string(); 
     let dist: i32;
@@ -254,11 +259,11 @@ pub async fn insert_order(c: Client, o: Order) -> Order {
     }                    
 }
 
-pub async fn select_traffik(c: Client, stand_id: i64) -> StopTraffic {
+pub async fn select_traffik(user_id: i64, c: Client, stand_id: i64) -> StopTraffic {
     let mut legs: Vec<Leg> = vec![];
     let stop_id:i32 = stand_id as i32;
     let leg_sql = "SELECT id, from_stand, to_stand, place, distance, started, completed, status, route_id \
-                            FROM leg WHERE (from_stand=$1 OR to_stand=$1) AND status=1".to_string(); // 1=ASSIGNED
+                            FROM leg WHERE (from_stand=$1 OR to_stand=$1) AND status IN (1,2,5)".to_string(); // 1=ASSIGNED, ACCEPTED, STARTED
     for row in c.query(&leg_sql, &[&stop_id]).await.unwrap() {
         legs.push(Leg { 
             id:     row.get(0), 
@@ -288,7 +293,7 @@ pub async fn select_traffik(c: Client, stand_id: i64) -> StopTraffic {
         routes.push(RouteWithEta{eta: calculate_eta(stop_id as i32, &r), route: r});
     }
     // the nearest cab should appear first
-    routes.sort_by(|a, b| b.eta.cmp(&a.eta));
+    routes.sort_by(|a, b| a.eta.cmp(&b.eta));
     let st = unsafe { STOPS.iter().find(| &x| x.id == stand_id) };
     let stop: Option<Stop> = match st {
         Some(s) => { Some( s.clone() ) }
@@ -298,13 +303,21 @@ pub async fn select_traffik(c: Client, stand_id: i64) -> StopTraffic {
         }
     };
     // finally find free cabs standing at the stop and waiting for assignments
-    let cabs = select_cabs_by_stop(c, stop_id as i32).await;
+    let cabs = select_cabs_by_stop(user_id, c, stop_id as i32).await;
     return StopTraffic{ stop, routes, cabs };
 } 
 
-pub async fn select_stats(c: Client, user_id: i64) -> Stats {
-    if user_id < 0 { // TODO: authorize here too 
+pub async fn select_stats(user_id: i64, c: Client, usr_id: i64) -> Stats {
+    debug!("select_stats, user_id={}", user_id);
+    if usr_id < 0 { // TODO: authorize here too 
         return Stats { kpis: vec![], orders: vec![], cabs: vec![] }
+    }
+    let sql = save_status();
+    match c.execute(&sql, &[]).await {
+        Ok(_) => { }
+        Err(err) => {
+            println!("{}", err);
+        }
     }
     return Stats { kpis: select_stats_kpis(&c).await, 
                     orders: select_stats_orders(&c).await, 
@@ -388,13 +401,25 @@ pub fn get_elapsed(val: Option<SystemTime>) -> i64 {
     }
 }
 
-fn check_result(res: Result<u64, tokio_postgres::Error>) {
-    match res {
+pub fn get_elapsed_dt(val: Option<DateTime<Local>>) -> i64 {
+    match val {
+        Some(x) => { 
+            let t = Local::now().time() - x.time() ;
+            t.num_seconds()
+        }
+        None => -1
+    }
+}
+
+fn check_result(res: Result<u64, tokio_postgres::Error>) -> u64 {
+    return match res {
         Ok(count) => {
             println!("Updated rows: {}", count);
+            count
         }
         Err(err) => {
             println!("{}", err);
+            0
         }
     }
 }

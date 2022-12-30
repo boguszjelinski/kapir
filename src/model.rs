@@ -157,7 +157,9 @@ pub struct Leg {
     pub place: i32,
     #[serde(default)]
     pub dist: i32,
+    #[serde(default)]
     pub started: Option<SystemTime>,
+    #[serde(default)]
     pub completed: Option<SystemTime>,
     pub status: RouteStatus
 }
@@ -196,6 +198,7 @@ pub struct Route {
     pub status: RouteStatus,
     #[serde(default)]
     pub legs: Vec<Leg>,
+    #[serde(default)]
     pub cab: Cab
 }
 
