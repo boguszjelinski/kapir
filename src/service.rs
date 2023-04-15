@@ -47,14 +47,17 @@ pub async fn update_cab(user_id: i64, c: Client, cab: Cab) -> Cab {
 }
 
 pub async fn update_leg(user_id: i64, c: Client, leg: Leg) -> Leg {
+    // these strange looking updates should authorize access
     if leg.status == RouteStatus::STARTED { 
-        let sql = "UPDATE leg l SET status=$1, started=$2 FROM route r WHERE id=$3 AND r.id=l.route_id AND r.cab_id=$4".to_string();
+        let sql = "UPDATE leg l SET status=$1, started=$2 FROM route r WHERE l.id=$3 AND r.id=l.route_id AND r.cab_id=$4".to_string();
         check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id, &user_id]).await);
     } else if leg.status == RouteStatus::COMPLETED { 
-        let sql = "UPDATE leg l SET status=$1, completed=$2 FROM route r WHERE id=$3 AND r.id=l.route_id AND r.cab_id=$4".to_string();
+        debug!("update_leg COMPLETED, user_id={} leg_id={}, status={}", user_id, leg.id, leg.status);
+        let sql = "UPDATE leg l SET status=$1, completed=$2 FROM route r WHERE l.id=$3 AND r.id=l.route_id AND r.cab_id=$4".to_string();
         check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id, &user_id]).await);
     } else { 
-        let sql = "UPDATE leg l SET status=$1 FROM route r WHERE id=$2 AND r.id=l.route_id AND r.cab_id=$3".to_string();
+        debug!("update_leg with unknown status, user_id={} leg_id={}, status={}", user_id, leg.id, leg.status);
+        let sql = "UPDATE leg l SET status=$1 FROM route r WHERE l.id=$2 AND r.id=l.route_id AND r.cab_id=$3".to_string();
         check_result(c.execute(&sql, &[&(leg.status as i32), &leg.id, &user_id]).await);
     }
     return leg.clone();
