@@ -1,7 +1,7 @@
 use crate::model::{Stop};
 
 pub const MAXSTOPSNUMB : usize = 5200;
-pub const CAB_SPEED : i16 = 60; // km/h
+pub const CAB_SPEED : i16 = 30; // km/h
 
 pub static mut STOPS : Vec<Stop> = vec![];
 pub static mut DIST : [[i16; MAXSTOPSNUMB]; MAXSTOPSNUMB] = [[0; MAXSTOPSNUMB]; MAXSTOPSNUMB];
