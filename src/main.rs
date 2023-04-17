@@ -43,6 +43,7 @@ impl std::error::Error for MyError {}
 async fn main() -> std::io::Result<()> {
     
     let mut dbhost: String;
+    let dbport: u16;
     let dbuser: String;
     let dbpass: String;
     let dbname: String;
@@ -57,6 +58,7 @@ async fn main() -> std::io::Result<()> {
         .try_deserialize::<HashMap<String, String>>()
         .unwrap();
     dbhost = cfg["dbhost"].clone();
+    dbport = cfg["dbport"].clone().parse::<u16>().unwrap();
     dbuser = cfg["dbuser"].clone();
     dbpass = cfg["dbpass"].clone();
     dbname = cfg["dbname"].clone();
@@ -79,6 +81,7 @@ async fn main() -> std::io::Result<()> {
     pg_config.user(&dbuser);
     pg_config.password(&dbpass);
     pg_config.dbname(&dbname);
+    pg_config.port(dbport);
 
     let mgr_config = ManagerConfig {
         recycling_method: RecyclingMethod::Fast
