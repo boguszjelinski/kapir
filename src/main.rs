@@ -101,7 +101,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_cab) // curl -u cab1:cab1 http://localhost:8080/cabs/1916
             .service(get_order) // curl -u cab2:cab2 http://localhost:8080/orders/51150
             .service(get_order2) // curl -u cab2:cab2 http://localhost:8080/orders
-            .service(get_order3) // curl -u cab2:cab2 http://localhost:8080/orders/
+            .service(get_order3) // curl -u cust1:cust1 http://localhost:8080/orders/
             .service(put_order) // curl -H "Content-type: application/json" -X PUT -u cust1:cust1 -d '{ "id":775791, "status":"ASSIGNED", "From":0,"To":0,"Wait":0,"Loss":0}' http://localhost:8080/orders
             .service(put_order2)
             .service(post_order) //curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u "cust28:cust28" -d '{"From":4001, "To":4002, "Wait":10, "Loss":90, "Shared": true}' http://localhost:8080/orders
@@ -113,7 +113,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_route) // curl -u cab2:cab2 http://localhost:8080/routes
             .service(get_route2)
             .service(get_route_by_id)
-            .service(get_route_with_orders)
+            .service(get_route_with_orders) //http://localhost:8080/routeswithorders
             .service(get_route_with_orders2)
             .service(get_stops) // curl -u cab2:cab2 http://localhost:8080/stops
             .service(get_stops2)

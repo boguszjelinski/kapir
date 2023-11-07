@@ -1,5 +1,5 @@
 dbhost = "localhost"
-dbport = "5433"
+dbport = "5432"
 dbuser = "kabina"
 dbpass = "kaboot"
 dbname = "kabina"

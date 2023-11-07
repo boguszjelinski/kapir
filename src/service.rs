@@ -161,8 +161,8 @@ pub async fn select_orders_by_route(user_id: i64, c: Client, id: i64) -> Vec<Ord
 pub async fn select_orders_by_what(c: &Client, id: i64, clause: &str) -> Vec<Order> {
     let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, received, started, completed, \
         at_time, eta, o.status, cab_id, customer_id, o.id, c.location, c.status, route_id, leg_id \
-        FROM taxi_order as o LEFT JOIN cab as c ON o.cab_id = c.id
-        WHERE ".to_string() + clause + " AND (o.status<3 OR o.status>6)";
+        FROM taxi_order as o LEFT JOIN cab as c ON o.cab_id = c.id WHERE ".to_string() 
+        + clause + " AND (o.status<3 OR o.status>6) ORDER BY received desc";
     let mut ret: Vec<Order> = Vec::new();
     for row in c.query(&sql, &[&id]).await.unwrap() {
         // some basic info about an order
@@ -200,8 +200,14 @@ fn build_order(id: i64, row: &Row) -> Order {
         status: get_order_status(row.get(12)),
         cab: Cab { id: -1, location: -1, status: CabStatus::CHARGING },
         cust_id: row.get(14),
-        route_id: row.get(18),
-        leg_id: row.get(19),
+        route_id: match row.get(18) {
+            Some(t) => t,
+            None => -1
+        },
+        leg_id: match row.get(19) {
+                    Some(t) => t,
+                    None => -1
+                },
     };
 }
 
@@ -236,7 +242,7 @@ pub async fn insert_order(user_id: i64, c: Client, o: Order) -> Order {
         println!("a hacker");
         return Order{ ..Default::default() }
     }
-    let orders = select_orders_by_what(&c, o.cust_id, "customer_id=$1 AND (o.status<3 OR o.status>6)").await;
+    let orders = select_orders_by_what(&c, o.cust_id, "customer_id=$1 AND (o.status<3 OR o.status = 7)").await;
     if orders.len() > 0 {
         println!("POST order failed for usr_id={}, orders exist", o.cust_id);
         return Order { ..Default::default() }
