@@ -1,5 +1,5 @@
-use std::{fmt, time::SystemTime};
-use chrono::{DateTime, Local};
+use std::fmt;
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
@@ -53,13 +53,13 @@ pub struct Order {
     #[serde(default)]
     pub status: OrderStatus,
     #[serde(default)]
-    pub received: Option<DateTime<Local>>,
+    pub received: Option<NaiveDateTime>,
     #[serde(default)]
-    pub started: Option<DateTime<Local>>,
+    pub started: Option<NaiveDateTime>,
     #[serde(default)]
-    pub completed: Option<DateTime<Local>>,
+    pub completed: Option<NaiveDateTime>,
     #[serde(default)]
-    pub at_time: Option<DateTime<Local>>,
+    pub at_time: Option<NaiveDateTime>,
     #[serde(default)]
     pub eta: i32,
     #[serde(default)]
@@ -158,9 +158,9 @@ pub struct Leg {
     #[serde(default)]
     pub dist: i32,
     #[serde(default)]
-    pub started: Option<SystemTime>,
+    pub started: Option<NaiveDateTime>,
     #[serde(default)]
-    pub completed: Option<SystemTime>,
+    pub completed: Option<NaiveDateTime>,
     pub status: RouteStatus
 }
 

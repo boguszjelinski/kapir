@@ -1,240 +1,237 @@
 use std::cmp;
-use std::time::SystemTime;
-use chrono::{DateTime, Local};
-use deadpool_postgres::Client;
-use tokio_postgres::Row;
-use log::{debug, info};
+use chrono::{NaiveDateTime, Local};
+use mysql::*;
+use mysql::prelude::*;
+use log::{debug, info, warn};
 use crate::model::{Cab, CabStatus, Order, Stop, Leg, Route, RouteStatus, Stats, Stat,
         get_cab_status, get_order_status, get_route_status, OrderStatus, RouteWithOrders, RouteWithEta, StopTraffic};
 use crate::distance::{STOPS, DIST};
 use crate::stats::{add_avg_pickup, add_avg_complete, save_status};
 
-pub async fn select_cab(user_id: i64, c: Client, id: i64) -> Cab {
+pub fn select_cab(user_id: i64, c: &mut PooledConn, id: i64) -> Cab {
     debug!("select_cab, user_id={}", user_id);
-    let sql = "SELECT location, status FROM cab WHERE id=$1".to_string();
-    match c.query_one(&sql, &[&id]).await {
-        Ok(row) => {
-            return Cab {  id: id, 
-                location: row.get(0), 
-                status: get_cab_status(row.get(1))
-            }
+    let res = c.exec_map("SELECT location, status FROM cab WHERE id=?", (id,), 
+            |(location, stat)| { Cab { id, location, status: get_cab_status(stat)}});
+    match res {
+        Ok(rows) => {
+           return rows[0];
         }
-        Err(err) => {
-            println!("{}", err);
-            return Cab { ..Default::default() }
-        }
+        Err(_) => { return Cab { ..Default::default() } }
     }
 } 
 
-pub async fn select_cabs_by_stop(user_id: i64, c: Client, stop_id: i32) -> Vec<Cab> {
+pub fn select_cabs_by_stop(user_id: i64, c: &mut PooledConn, stop_id: i32) -> Vec<Cab> {
     debug!("select_cabs_by_stop, user_id={}", user_id);
-    let sql = "SELECT id, name FROM cab WHERE location=$1 AND status=1".to_string(); // 1=FREE
-    let mut ret: Vec<Cab> = Vec::new();
-    for row in c.query(&sql, &[&stop_id]).await.unwrap() {
-        ret.push(Cab { id: row.get(0), location: stop_id, status: get_cab_status(1) });
+    let res = c.exec_map("SELECT id  FROM cab WHERE location=? AND status=1", (stop_id,), 
+                                |(id,)| { Cab { id, location: stop_id, status: get_cab_status(1)}});
+    match res {
+        Ok(rows) => {
+            return rows;
+        }
+        Err(_) => { return Vec::new() }
     }
-    return ret;
 } 
 
-pub async fn update_cab(user_id: i64, c: Client, cab: Cab) -> Cab {
+pub fn update_cab(user_id: i64, c: &mut PooledConn, cab: Cab) -> Cab {
     if user_id == cab.id {
-        let sql = "UPDATE cab SET status=$1, location=$2 WHERE id=$3".to_string(); 
-        check_result(c.execute(&sql, &[&(cab.status as i32), &cab.location, &cab.id]).await);
+        let res = c.exec_iter("UPDATE cab SET status=?, location=? WHERE id=?", 
+                                                        (cab.status as i32, cab.location, cab.id));
+        check_result(res);
     } else {
         info!("update_cab not authorised, user_id={}, cab_id={}", user_id, cab.id);
     }
     return cab.clone();
 }
 
-pub async fn update_leg(user_id: i64, c: Client, leg: Leg) -> Leg {
+pub fn update_leg(user_id: i64, c: &mut PooledConn, leg: Leg) -> Leg {
     // these strange looking updates should authorize access
     if leg.status == RouteStatus::STARTED { 
-        let sql = "UPDATE leg l SET status=$1, started=$2 FROM route r WHERE l.id=$3 AND r.id=l.route_id AND r.cab_id=$4".to_string();
-        check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id, &user_id]).await);
+        check_result(c.exec_iter("UPDATE leg l SET status=?, started=? FROM route r WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?",
+                    (leg.status as i32, Local::now().naive_local(), leg.id, user_id)));
     } else if leg.status == RouteStatus::COMPLETED { 
         debug!("update_leg COMPLETED, user_id={} leg_id={}, status={}", user_id, leg.id, leg.status);
-        let sql = "UPDATE leg l SET status=$1, completed=$2 FROM route r WHERE l.id=$3 AND r.id=l.route_id AND r.cab_id=$4".to_string();
-        check_result(c.execute(&sql, &[&(leg.status as i32), &(SystemTime::now()), &leg.id, &user_id]).await);
+        check_result(c.exec_iter("UPDATE leg l SET status=?, completed=? FROM route r WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?",
+                    (leg.status as i32, Local::now().naive_local(), leg.id, user_id)));
     } else { 
         debug!("update_leg with unknown status, user_id={} leg_id={}, status={}", user_id, leg.id, leg.status);
-        let sql = "UPDATE leg l SET status=$1 FROM route r WHERE l.id=$2 AND r.id=l.route_id AND r.cab_id=$3".to_string();
-        check_result(c.execute(&sql, &[&(leg.status as i32), &leg.id, &user_id]).await);
+        check_result(c.exec_iter("UPDATE leg l SET status=? FROM route r WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?", 
+                        (leg.status as i32, leg.id, user_id)));
     }
     return leg.clone();
 }
 
-pub async fn update_route(user_id: i64, c: Client, route: Route) -> Route {
-    let sql = "UPDATE route SET status=$1 WHERE id=$2 AND cab_id=$3".to_string(); 
-    check_result(c.execute(&sql, &[&(route.status as i32), &route.id, &user_id]).await);
+pub fn update_route(user_id: i64, c: &mut PooledConn, route: Route) -> Route {
+    check_result(c.exec_iter("UPDATE route SET status=? WHERE id=? AND cab_id=?",
+                    (route.status as i32, route.id, user_id)));
     return route.clone();
 }
 
-pub async fn select_route_by_cab(user_id: i64, c: Client, id: i64) -> Route {
+pub fn select_route_by_cab(user_id: i64, c:  &mut PooledConn, id: i64) -> Route {
     debug!("select_route_by_cab, user={}", user_id);
-    return select_route_by_cab_ref(&c, id).await;
+    return select_route_by_cab_ref(c, id);
 }
 
-pub async fn select_route_by_cab_ref(c: &Client, id: i64) -> Route {
-    let sql = "SELECT id FROM route WHERE cab_id=$1 AND status=1 ORDER BY id LIMIT 1".to_string(); //status=1: ASSIGNED
+pub fn select_route_by_cab_ref(c: &mut PooledConn, id: i64) -> Route {
     // TODO: cab's name
     // TODO: LIMIT 1, an error rather if there are more
     // SELECT r.id, c.name FROM route r, cab c WHERE r.cab_id=$1 AND r.status=1 and r.cab_id=c.id ORDER BY id LIMIT 1
-    match c.query_one(&sql, &[&id]).await {
-        Ok(row) => {
-            return select_route_ref(c, row.get(0)).await;
+    let sql = format!("SELECT id FROM route WHERE cab_id={} AND status=1 ORDER BY id LIMIT 1", id);
+    let res: Result<Option<i64>>  = c.query_first(sql);
+    return match res {
+        Ok(o) => { 
+            match o {
+                Some(route_id) => { select_route_ref(c, route_id) }
+                None => { Route { ..Default::default()} }
+            }
         }
-        Err(_err) => {
-            //println!("{}", err);
-            return Route { ..Default::default() }
-        }
-    }
+        Err(_) => { Route { ..Default::default() } }
+    };
 } 
 
-pub async fn select_route_by_id(user_id: i64, c: Client, id: i64) -> Route {
+pub fn select_route_by_id(user_id: i64, c: &mut PooledConn, id: i64) -> Route {
     debug!("select_route_by_id, user={}", user_id);
-    return select_route_ref(&c, id).await;
+    return select_route_ref(c, id);
 }
 
-pub async fn select_route_ref(c: &Client, id: i64) -> Route {
-    let mut legs: Vec<Leg> = vec![];
+pub fn select_route_ref(c: &mut PooledConn, id: i64) -> Route {
     // TODO: maybe a join and one DB call?
-    let leg_sql = "SELECT id, from_stand, to_stand, place, distance, started, completed, status \
-                            FROM leg WHERE route_id=$1 ORDER by place".to_string();
-    for row in c.query(&leg_sql, &[&id]).await.unwrap() {
-        legs.push(Leg { 
-            id:     row.get(0), 
-            route_id: id, 
-            from:   row.get(1), 
-            to:     row.get(2), 
-            place:  row.get(3), 
-            dist:   row.get(4), 
-            started:row.get(5), 
-            completed:row.get(6), 
-            status: get_route_status(row.get(7))
-        });
-    }
-    // Cab details
-    let cab: Cab;
-    let sql = "SELECT c.id, c.location, c.status FROM cab c, route r \
-                        WHERE r.id=$1 and c.id = r.cab_id".to_string();
-    match c.query_one(&sql, &[&id]).await {
-        Ok(row) => {
-            cab = Cab { id: row.get(0), location: row.get(1),
-                        status: get_cab_status(row.get(2)) };
-        }
-        Err(_err) => {
-            //println!("{}", err);
-            cab = Cab { ..Default::default() }
-        }
-    }
+    let res = c.exec_map("SELECT id, from_stand, to_stand, place, distance, started, completed, status \
+                                                        FROM leg WHERE route_id=? ORDER by place", (id,), 
+            |(leg_id, from_stand, to_stand, place, distance, started, completed, status,)| { 
+                Leg { 
+                    id: leg_id, 
+                    route_id: id, 
+                    from:   from_stand, 
+                    to:     to_stand, 
+                    place, 
+                    dist:   distance, 
+                    started, 
+                    completed, 
+                    status: get_route_status(status)
+                }});
+    let legs = match res {
+        Ok(rows) => { rows }
+        Err(_) => { Vec::new() }
+    };
 
-    return Route {
-        id: id,
-        status: RouteStatus::ASSIGNED, // see WHERE above
-        legs: legs,
-        cab: cab
-    }
+    // Cab details
+    let res 
+        = c.exec_map("SELECT c.id, c.location, c.status FROM cab c, route r WHERE r.id=? and c.id = r.cab_id", (id,), 
+        |(id, location, status)| { Cab { id, location, status: get_cab_status(status) }});
+    let cab: Cab = match res {
+        Ok(row) => { row[0] }
+        Err(_err) => { Cab { ..Default::default() }}
+    };
+
+    return Route { id, status: RouteStatus::ASSIGNED, legs, cab }
 }
 
-pub async fn select_route_with_orders(user_id: i64, c: Client, id: i64) -> RouteWithOrders {
-    let route: Route = select_route_by_cab_ref(&c, id).await;
-    let orders: Vec<Order> = select_orders_by_route(user_id, c, route.id).await;
+pub fn select_route_with_orders(user_id: i64, c: &mut PooledConn, id: i64) -> RouteWithOrders {
+    let route: Route = select_route_by_cab_ref(c, id);
+    let orders: Vec<Order> = select_orders_by_route(user_id, c, route.id);
     return RouteWithOrders {route, orders};
 }
 
-pub async fn select_order(user_id: i64, c: Client, id: i64) -> Order {
+pub fn select_order(user_id: i64, c: &mut PooledConn, id: i64) -> Order {
     debug!("select_order, user_id={}", user_id);
-    let orders: Vec<Order> = select_orders_by_what(&c, id, "o.id=$1").await;
+    let orders: Vec<Order> = select_orders_by_what(c, id, "o.id=?");
     return orders[0];
 } 
 
-pub async fn select_orders(user_id: i64, c: Client, id: i64) -> Vec<Order> {
+pub fn select_orders(user_id: i64, c: &mut PooledConn, id: i64) -> Vec<Order> {
     debug!("select_orders, user_id={}", user_id);
-    return select_orders_by_what(&c, id, "customer_id=$1 AND (o.status<3 OR o.status>6)").await;
+    return select_orders_by_what(c, id, "customer_id=? AND (o.status<3 OR o.status>6)");
 } 
 
-pub async fn select_orders_by_route(user_id: i64, c: Client, id: i64) -> Vec<Order> {
+pub fn select_orders_by_route(user_id: i64, c: &mut PooledConn, id: i64) -> Vec<Order> {
     debug!("select_orders_by_route, user_id={}", user_id);
-    return select_orders_by_what(&c, id, "route_id=$1 AND (o.status<3 OR o.status>6)").await;
+    return select_orders_by_what(c, id, "route_id=? AND (o.status<3 OR o.status>6)");
 } 
 
-pub async fn select_orders_by_what(c: &Client, id: i64, clause: &str) -> Vec<Order> {
+fn get_naivedate(row: &Row, index: usize) -> Option<NaiveDateTime> {
+    let val: Option<mysql::Value> = row.get(index);
+    return match val {
+        Some(x) => {
+            if x == Value::NULL {
+                None
+            } else {
+                row.get(index)
+            }
+        }
+        None => None
+    };
+}
+
+pub fn select_orders_by_what(c: &mut PooledConn, id: i64, clause: &str) -> Vec<Order> {
     let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, received, started, completed, \
         at_time, eta, o.status, cab_id, customer_id, o.id, c.location, c.status, route_id, leg_id \
         FROM taxi_order as o LEFT JOIN cab as c ON o.cab_id = c.id WHERE ".to_string() 
         + clause + " AND (o.status<3 OR o.status>6) ORDER BY received desc";
     let mut ret: Vec<Order> = Vec::new();
-    for row in c.query(&sql, &[&id]).await.unwrap() {
-        // some basic info about an order
-        let mut o: Order = build_order(row.get(15), &row); // TODO: these indices are ugly & errorprone
-        // assigned Cab
-        let cab: Option<i64> = row.get(13);
-        match cab {
-            Some(cab_id) => { 
-                o.cab = Cab { id: cab_id, location: row.get(16), status: get_cab_status(row.get(17)) };
+
+    let selected: Result<Vec<Row>> = c.exec(sql, (id,));
+    match selected {
+        Ok(sel) => {
+            for r in sel {
+                let cab_id: Option<i64> = r.get(13);
+                ret.push(Order {
+                    id: r.get(15).unwrap(),
+                    from: r.get(0).unwrap(),
+                    to: r.get(1).unwrap(),
+                    wait: r.get(2).unwrap(),
+                    loss: r.get(3).unwrap(),
+                    distance: r.get(4).unwrap(),
+                    shared: r.get(5).unwrap(),
+                    in_pool: r.get(6).unwrap(),
+                    received: get_naivedate(&r, 7),
+                    started: get_naivedate(&r, 8),
+                    completed: get_naivedate(&r, 9),
+                    at_time: get_naivedate(&r, 10),
+                    eta: r.get(11).unwrap(),
+                    status: get_order_status(r.get(12).unwrap()),
+                    cab: match cab_id {
+                        Some(cab_id) => { 
+                            Cab { id: cab_id, location: r.get(16).unwrap(), 
+                                    status: get_cab_status(r.get(17).unwrap()) }
+                        }
+                        None => { // not assigned
+                            Cab { id: -1, location: -1, status: CabStatus::CHARGING }
+                        }
+                    },
+                    cust_id: r.get(14).unwrap(),
+                    route_id: match r.get(18) {
+                        Some(t) => t,
+                        None => -1
+                    },
+                    leg_id: match r.get(19)  {
+                                Some(t) => t,
+                                None => -1
+                            },
+                });
             }
-            None => { // not assigned
-                // NULL
-            }
-        }
-        ret.push(o);
+        },
+        Err(error) => warn!("Problem reading row: {:?}", error),
     }
     return ret;
 }
 
-fn build_order(id: i64, row: &Row) -> Order {
-    return Order {
-        id,
-        from: row.get(0),
-        to: row.get(1),
-        wait: row.get(2),
-        loss: row.get(3),
-        distance: row.get(4),
-        shared: row.get(5),
-        in_pool: row.get(6),
-        received: systime_to_dttime(row.get::<usize,Option<SystemTime>>(7)),
-        started: systime_to_dttime(row.get::<usize,Option<SystemTime>>(8)),
-        completed: systime_to_dttime(row.get::<usize,Option<SystemTime>>(9)),
-        at_time: systime_to_dttime(row.get::<usize,Option<SystemTime>>(10)),
-        eta: row.get(11),
-        status: get_order_status(row.get(12)),
-        cab: Cab { id: -1, location: -1, status: CabStatus::CHARGING },
-        cust_id: row.get(14),
-        route_id: match row.get(18) {
-            Some(t) => t,
-            None => -1
-        },
-        leg_id: match row.get(19) {
-                    Some(t) => t,
-                    None => -1
-                },
-    };
-}
-
-fn systime_to_dttime(time: Option<SystemTime>) -> Option<DateTime<Local>> {
-    match time {
-        Some(t) => Some(t.clone().into()),
-        None => None
-    }
-}
-
-pub async fn update_order(user_id: i64, c: Client, order: Order) -> Order {
+pub fn update_order(user_id: i64, c: &mut PooledConn, order: Order) -> Order {
     if order.status == OrderStatus::PICKEDUP {
-        let sql = "UPDATE taxi_order SET status=$1, started=$2 WHERE id=$3 AND customer_id=$4".to_string(); 
-        check_result(c.execute(&sql, &[&(order.status as i32), &(SystemTime::now()), &order.id, &user_id]).await);
+        check_result(c.exec_iter("UPDATE taxi_order SET status=?, started=? WHERE id=? AND customer_id=?", 
+            (order.status as i32, Local::now().naive_local(), order.id, user_id)));
         add_avg_pickup(get_elapsed_dt(order.received));
     } else if order.status == OrderStatus::COMPLETED {
-        let sql = "UPDATE taxi_order SET status=$1, completed=$2 WHERE id=$3 AND customer_id=$4".to_string(); 
-        check_result(c.execute(&sql, &[&(order.status as i32), &(SystemTime::now()), &order.id, &user_id]).await);
+        check_result(c.exec_iter("UPDATE taxi_order SET status=?, completed=? WHERE id=? AND customer_id=?",
+         (order.status as i32, Local::now().naive_local(), order.id, user_id)));
         add_avg_complete(get_elapsed_dt(order.received));
     } else {
-        let sql = "UPDATE taxi_order SET status=$1 WHERE id=$2 AND customer_id=$3".to_string(); 
-        check_result(c.execute(&sql, &[&(order.status as i32), &order.id, &user_id]).await);
+        check_result(c.exec_iter("UPDATE taxi_order SET status=? WHERE id=? AND customer_id=?", 
+            (order.status as i32, order.id, user_id)));
     }
     return order.clone();
 }
 
-pub async fn insert_order(user_id: i64, c: Client, o: Order) -> Order {
+pub fn insert_order(user_id: i64, c: &mut PooledConn, o: Order) -> Order {
     if o.from == o.to {
         println!("a joker");
         return Order{ ..Default::default() }
@@ -242,24 +239,38 @@ pub async fn insert_order(user_id: i64, c: Client, o: Order) -> Order {
         println!("a hacker");
         return Order{ ..Default::default() }
     }
-    let orders = select_orders_by_what(&c, o.cust_id, "customer_id=$1 AND (o.status<3 OR o.status = 7)").await;
+    let orders = select_orders_by_what(c, o.cust_id, "customer_id=? AND (o.status<3 OR o.status = 7)");
     if orders.len() > 0 {
         println!("POST order failed for usr_id={}, orders exist", o.cust_id);
         return Order { ..Default::default() }
     }
-
-    let sql = "INSERT INTO taxi_order (from_stand, to_stand, max_loss, max_wait, shared, in_pool, eta,\
-                    status, received, distance, customer_id) VALUES ($1,$2,$3,$4,$5,false,-1,$6,$7,$8,$9) RETURNING (id)".to_string(); 
     let dist: i32;
     unsafe { dist = DIST[o.from as usize][o.to as usize] as i32; }
-    match c.query_one(&sql, &[
-        &o.from, &o.to, &o.loss, &o.wait, &o.shared, &(OrderStatus::RECEIVED as i32), &(SystemTime::now()), 
-        &dist, &o.cust_id]).await {
-        Ok(row) => {
+
+    let res = c.exec_drop(
+        "INSERT INTO taxi_order (from_stand, to_stand, max_loss, max_wait, shared, in_pool, eta,\
+                status, received, distance, customer_id) VALUES ( \
+                :from_stand, :to_stand, :max_loss, :max_wait, :shared, false, -1, :status, :received, :distance, :customer_id",
+        params! {
+            "from_stand" => o.from,
+            "to_stand" => o.to,
+            "max_loss" => o.loss,
+            "max_wait" => o.wait,
+            "shared"   => o.shared,
+            "status"   => OrderStatus::RECEIVED as i32,
+            "received" => Local::now().naive_local(),
+            "distance" => dist,
+            "customer_id" => o.cust_id
+        },
+    )
+    .and_then(|_| Ok(c.last_insert_id()));
+    
+    match res {
+        Ok(ins_id) => {
             let mut ret: Order = o.clone();
             ret.distance = dist;
-            ret.id = row.get(0);
-            ret.received = Some(Local::now()); // it is not exactly the same as in DB but good enough for KPIs - client will send it back on PICKUP and COMPLETE
+            ret.id = ins_id as i64;
+            ret.received = Some(Local::now().naive_local()); // it is not exactly the same as in DB but good enough for KPIs - client will send it back on PICKUP and COMPLETE
             return ret;
         }
         Err(err) => {
@@ -269,25 +280,30 @@ pub async fn insert_order(user_id: i64, c: Client, o: Order) -> Order {
     }                    
 }
 
-pub async fn select_traffik(user_id: i64, c: Client, stand_id: i64) -> StopTraffic {
-    let mut legs: Vec<Leg> = vec![];
+pub fn select_traffik(user_id: i64, c: &mut PooledConn, stand_id: i64) -> StopTraffic {
+    
     let stop_id:i32 = stand_id as i32;
     let leg_sql = "SELECT id, from_stand, to_stand, place, distance, started, completed, status, route_id \
-                            FROM leg WHERE (from_stand=$1 OR to_stand=$1) AND status IN (1,2,5)".to_string(); // 1=ASSIGNED, ACCEPTED, STARTED
-    for row in c.query(&leg_sql, &[&stop_id]).await.unwrap() {
-        legs.push(Leg { 
-            id:     row.get(0), 
-            from:   row.get(1), 
-            to:     row.get(2), 
-            place:  row.get(3), 
-            dist:   row.get(4), 
-            started:row.get(5), 
-            completed:row.get(6), 
-            status: get_route_status(row.get(7)),
-            route_id: row.get(8)
+                            FROM leg WHERE (from_stand=? OR to_stand=?) AND status IN (1,2,5)".to_string(); // 1=ASSIGNED, ACCEPTED, STARTED
+    let res = c.exec_map(leg_sql, (stop_id, stop_id,), 
+        |(id, from, to, place, dist, started, completed, status, route_id)| {
+            Leg { 
+                id, 
+                from, 
+                to, 
+                place, 
+                dist, 
+                started, 
+                completed, 
+                status: get_route_status(status),
+                route_id
+            }
         });
-    }
-   
+    let legs = match res {
+        Ok(l) => { l }
+        Err(_) => { Vec::new() }
+    };
+    
     let mut routes: Vec<RouteWithEta> = vec![];
     
     'outer: for (i, l) in legs.iter().enumerate() {
@@ -298,7 +314,7 @@ pub async fn select_traffik(user_id: i64, c: Client, stand_id: i64) -> StopTraff
                 continue 'outer; // ignore it
             }
         }
-        let r = select_route_ref(&c, l.route_id).await;
+        let r = select_route_ref(c, l.route_id);
         println!("DEBUG: l.route_id={}", l.route_id);
         routes.push(RouteWithEta{eta: calculate_eta(stop_id as i32, &r), route: r});
     }
@@ -313,57 +329,56 @@ pub async fn select_traffik(user_id: i64, c: Client, stand_id: i64) -> StopTraff
         }
     };
     // finally find free cabs standing at the stop and waiting for assignments
-    let cabs = select_cabs_by_stop(user_id, c, stop_id as i32).await;
+    let cabs = select_cabs_by_stop(user_id, c, stop_id as i32);
     return StopTraffic{ stop, routes, cabs };
 } 
 
-pub async fn select_stats(user_id: i64, c: Client, usr_id: i64) -> Stats {
+pub fn select_stats(user_id: i64, c: &mut PooledConn, usr_id: i64) -> Stats {
     debug!("select_stats, user_id={}", user_id);
     if usr_id < 0 { // TODO: authorize here too 
         return Stats { kpis: vec![], orders: vec![], cabs: vec![] }
     }
     let sql = save_status();
-    match c.batch_execute(&sql).await {
+    match c.query_iter(sql) {
         Ok(_) => {}
         Err(err) => {
-            info!("Saving stats failed {}, err: {}", sql, err);
+            warn!("SQL failed to run, err: {}", err);
         }
     }
-    return Stats { kpis: select_stats_kpis(&c).await, 
-                    orders: select_stats_orders(&c).await, 
-                    cabs: select_stats_cabs(&c).await
+    return Stats { kpis: select_stats_kpis(c), 
+                    orders: select_stats_orders(c), 
+                    cabs: select_stats_cabs(c)
                 }
 }
 
-pub async fn select_stats_kpis(c: &Client) -> Vec<Stat> {
-    let sql = "SELECT name, int_val FROM stat".to_string();
-    let mut ret: Vec<Stat> = Vec::new();
-    for row in c.query(&sql, &[]).await.unwrap() {
-        ret.push(Stat { name: row.get(0), int_val: row.get(1) });
-    }
-    return ret;
+pub fn select_stats_kpis(c: &mut PooledConn) -> Vec<Stat> {
+    let res= c.exec_map("SELECT name, int_val FROM stat", (), 
+                        |(name, int_val)| { Stat { name, int_val }});
+    return match res {
+        Ok(rows) => { rows }
+        Err(_) => { Vec::new() }
+    };
 }
 
-pub async fn select_stats_orders(c: &Client) -> Vec<Stat> {
-    let sql = "select status,count(*) from taxi_order group by status".to_string();
-    let mut ret: Vec<Stat> = Vec::new();
-    for row in c.query(&sql, &[]).await.unwrap() {
-        let status: i32 = row.get(0);
-        let count: i64 = row.get(1);
-        ret.push(Stat { name: get_order_status(status).to_string(), int_val: count as i32 });
-    }
-    return ret;
+pub fn select_stats_orders(c: &mut PooledConn) -> Vec<Stat> {
+    let sql = "select status, count(*) from taxi_order group by status".to_string();
+    let res = c.exec_map(sql, (), |(status,count,)| {
+        Stat { name: get_order_status(status).to_string(), int_val: count}
+    });
+    return match res {
+        Ok(rows) => { rows }
+        Err(_) => { Vec::new() }
+    };
 }
 
-pub async fn select_stats_cabs(c: &Client) -> Vec<Stat> {
+pub fn select_stats_cabs(c: &mut PooledConn) -> Vec<Stat> {
     let sql = "select status,count(*) from cab group by status".to_string();
-    let mut ret: Vec<Stat> = Vec::new();
-    for row in c.query(&sql, &[]).await.unwrap() {
-        let status: i32 = row.get(0);
-        let count: i64 = row.get(1);
-        ret.push(Stat { name: get_cab_status(status).to_string(), int_val: count as i32 });
-    }
-    return ret;
+    let res = c.exec_map(sql, (), |( status, int_val )|
+                { Stat { name: get_cab_status(status).to_string(), int_val}});
+    return match res {
+        Ok(rows) => { rows }
+        Err(_) => { Vec::new() }
+    };
 }
 
 pub fn calculate_eta(stand_id: i32, route: &Route) -> i16 {
@@ -399,19 +414,17 @@ pub fn calculate_eta(stand_id: i32, route: &Route) -> i16 {
     return eta as i16;
 }
 
-pub fn get_elapsed(val: Option<SystemTime>) -> i64 {
+pub fn get_elapsed(val: Option<NaiveDateTime>) -> i64 {
     match val {
         Some(x) => { 
-            match x.elapsed() {
-                Ok(elapsed) => elapsed.as_secs() as i64,
-                Err(_) => -1
-            }
+            let now = Local::now().naive_local();
+            return (now - x).num_seconds();
         }
         None => -1
     }
 }
 
-pub fn get_elapsed_dt(val: Option<DateTime<Local>>) -> i64 {
+pub fn get_elapsed_dt(val: Option<NaiveDateTime>) -> i64 {
     match val {
         Some(x) => { 
             let t = Local::now().time() - x.time() ;
@@ -421,11 +434,11 @@ pub fn get_elapsed_dt(val: Option<DateTime<Local>>) -> i64 {
     }
 }
 
-fn check_result(res: Result<u64, tokio_postgres::Error>) -> u64 {
+fn check_result(res: Result<QueryResult<'_,'_,'_, Binary>>) -> u64 {
     return match res {
-        Ok(count) => {
-            println!("Updated rows: {}", count);
-            count
+        Ok(q) => {
+            println!("Updated rows: {}", q.affected_rows());
+            q.affected_rows()
         }
         Err(err) => {
             println!("{}", err);
@@ -434,16 +447,12 @@ fn check_result(res: Result<u64, tokio_postgres::Error>) -> u64 {
     }
 }
 
-pub async fn init_read_stops(client: Client) {
-  unsafe { 
-    for row in client.query("SELECT id, latitude, longitude, bearing, name FROM stop", &[]).await.unwrap() {
-        STOPS.push(Stop {
-            id: row.get(0),
-            latitude: row.get(1),
-            longitude: row.get(2),
-            bearing: row.get(3),
-            name: Some(row.get(4)),
-        });
-    }
-  }
+pub async fn init_read_stops(mut client: PooledConn) {
+    let res = client.exec_map("SELECT id, latitude, longitude, bearing, name FROM stop", (), 
+        |(id, latitude, longitude, bearing, name)|
+            { Stop { id, latitude, longitude, bearing, name: Some(name) }});
+    match res {
+        Ok(rows) => { unsafe { STOPS = rows; }}
+        Err(_) => {  }
+    };
 }
