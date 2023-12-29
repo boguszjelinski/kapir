@@ -46,15 +46,15 @@ pub fn update_cab(user_id: i64, c: &mut PooledConn, cab: Cab) -> Cab {
 pub fn update_leg(user_id: i64, c: &mut PooledConn, leg: Leg) -> Leg {
     // these strange looking updates should authorize access
     if leg.status == RouteStatus::STARTED { 
-        check_result(c.exec_iter("UPDATE leg l SET status=?, started=? FROM route r WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?",
+        check_result(c.exec_iter("UPDATE leg l, route r SET l.status=?, l.started=? WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?",
                     (leg.status as i32, Local::now().naive_local(), leg.id, user_id)));
     } else if leg.status == RouteStatus::COMPLETED { 
         debug!("update_leg COMPLETED, user_id={} leg_id={}, status={}", user_id, leg.id, leg.status);
-        check_result(c.exec_iter("UPDATE leg l SET status=?, completed=? FROM route r WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?",
+        check_result(c.exec_iter("UPDATE leg l, route r SET l.status=?, l.completed=? WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?",
                     (leg.status as i32, Local::now().naive_local(), leg.id, user_id)));
     } else { 
         debug!("update_leg with unknown status, user_id={} leg_id={}, status={}", user_id, leg.id, leg.status);
-        check_result(c.exec_iter("UPDATE leg l SET status=? FROM route r WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?", 
+        check_result(c.exec_iter("UPDATE leg l, route r SET l.status=? WHERE l.id=? AND r.id=l.route_id AND r.cab_id=?", 
                         (leg.status as i32, leg.id, user_id)));
     }
     return leg.clone();
@@ -76,11 +76,13 @@ pub fn select_route_by_cab_ref(c: &mut PooledConn, id: i64) -> Route {
     // TODO: LIMIT 1, an error rather if there are more
     // SELECT r.id, c.name FROM route r, cab c WHERE r.cab_id=$1 AND r.status=1 and r.cab_id=c.id ORDER BY id LIMIT 1
     let sql = format!("SELECT id FROM route WHERE cab_id={} AND status=1 ORDER BY id LIMIT 1", id);
+
     let res: Result<Option<i64>>  = c.query_first(sql);
     return match res {
         Ok(o) => { 
             match o {
-                Some(route_id) => { select_route_ref(c, route_id) }
+                Some(route_id) => { 
+                    select_route_ref(c, route_id) }
                 None => { Route { ..Default::default()} }
             }
         }
@@ -94,26 +96,29 @@ pub fn select_route_by_id(user_id: i64, c: &mut PooledConn, id: i64) -> Route {
 }
 
 pub fn select_route_ref(c: &mut PooledConn, id: i64) -> Route {
-    // TODO: maybe a join and one DB call?
-    let res = c.exec_map("SELECT id, from_stand, to_stand, place, distance, started, completed, status \
-                                                        FROM leg WHERE route_id=? ORDER by place", (id,), 
-            |(leg_id, from_stand, to_stand, place, distance, started, completed, status,)| { 
-                Leg { 
-                    id: leg_id, 
-                    route_id: id, 
-                    from:   from_stand, 
-                    to:     to_stand, 
-                    place, 
-                    dist:   distance, 
-                    started, 
-                    completed, 
-                    status: get_route_status(status)
-                }});
-    let legs = match res {
-        Ok(rows) => { rows }
-        Err(_) => { Vec::new() }
+    // TODO: maybe a join and one DB call?              started, completed, 
+    let res: Result<Vec<Row>> = c.exec("SELECT id, from_stand, to_stand, place, distance, started, completed, status \
+                                                        FROM leg WHERE route_id=? ORDER by place", (id,));
+    let mut legs: Vec<Leg> = Vec::new();
+    match res {
+        Ok(rows) => { 
+            for r in rows {
+                legs.push(
+                    Leg { 
+                        id: r.get(0).unwrap(), 
+                        route_id: id, 
+                        from:   r.get(1).unwrap(), 
+                        to:     r.get(2).unwrap(), 
+                        place: r.get(3).unwrap(), 
+                        dist:   r.get(4).unwrap(), 
+                        started: get_naivedate(&r, 5), 
+                        completed: get_naivedate(&r, 6),
+                        status: get_route_status(r.get(7).unwrap())
+                    });
+            }
+        }
+        Err(_) => { }
     };
-
     // Cab details
     let res 
         = c.exec_map("SELECT c.id, c.location, c.status FROM cab c, route r WHERE r.id=? and c.id = r.cab_id", (id,), 
@@ -122,7 +127,6 @@ pub fn select_route_ref(c: &mut PooledConn, id: i64) -> Route {
         Ok(row) => { row[0] }
         Err(_err) => { Cab { ..Default::default() }}
     };
-
     return Route { id, status: RouteStatus::ASSIGNED, legs, cab }
 }
 
@@ -162,13 +166,26 @@ fn get_naivedate(row: &Row, index: usize) -> Option<NaiveDateTime> {
     };
 }
 
+fn get_i64(row: &Row, index: usize) -> i64 {
+    let val: Option<mysql::Value> = row.get(index);
+    return match val {
+        Some(x) => {
+            if x == Value::NULL {
+                -1
+            } else {
+                row.get(index).unwrap()
+            }
+        }
+        None => -1
+    };
+}
+
 pub fn select_orders_by_what(c: &mut PooledConn, id: i64, clause: &str) -> Vec<Order> {
     let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, received, started, completed, \
         at_time, eta, o.status, cab_id, customer_id, o.id, c.location, c.status, route_id, leg_id \
         FROM taxi_order as o LEFT JOIN cab as c ON o.cab_id = c.id WHERE ".to_string() 
         + clause + " AND (o.status<3 OR o.status>6) ORDER BY received desc";
     let mut ret: Vec<Order> = Vec::new();
-
     let selected: Result<Vec<Row>> = c.exec(sql, (id,));
     match selected {
         Ok(sel) => {
@@ -199,14 +216,8 @@ pub fn select_orders_by_what(c: &mut PooledConn, id: i64, clause: &str) -> Vec<O
                         }
                     },
                     cust_id: r.get(14).unwrap(),
-                    route_id: match r.get(18) {
-                        Some(t) => t,
-                        None => -1
-                    },
-                    leg_id: match r.get(19)  {
-                                Some(t) => t,
-                                None => -1
-                            },
+                    route_id: get_i64(&r, 18),
+                    leg_id: get_i64(&r, 19),
                 });
             }
         },
@@ -250,7 +261,7 @@ pub fn insert_order(user_id: i64, c: &mut PooledConn, o: Order) -> Order {
     let res = c.exec_drop(
         "INSERT INTO taxi_order (from_stand, to_stand, max_loss, max_wait, shared, in_pool, eta,\
                 status, received, distance, customer_id) VALUES ( \
-                :from_stand, :to_stand, :max_loss, :max_wait, :shared, false, -1, :status, :received, :distance, :customer_id",
+                :from_stand, :to_stand, :max_loss, :max_wait, :shared, false, -1, :status, :received, :distance, :customer_id)",
         params! {
             "from_stand" => o.from,
             "to_stand" => o.to,
@@ -386,6 +397,7 @@ pub fn calculate_eta(stand_id: i32, route: &Route) -> i16 {
         return -1;
     }
     let mut eta = 0;
+    let mut wait_legs: i16 = 0; // each leg takes 15secs more, TODO: check why
     let route_cpy = route.clone();
     for leg in route_cpy.legs {
         if leg.from == stand_id {
@@ -407,11 +419,11 @@ pub fn calculate_eta(stand_id: i32, route: &Route) -> i16 {
             }
         } else if leg.status == RouteStatus::ASSIGNED {
             eta += leg.dist;
-        } else {
-            println!("Leg {} is in not STARTED, nor ASSIGNED {}", leg.id, route.id);
         }
+        wait_legs += 1;
+        eta += leg.dist;
     }
-    return eta as i16;
+    return eta as i16 + ((wait_legs as f32 * 0.5) as i16);
 }
 
 pub fn get_elapsed(val: Option<NaiveDateTime>) -> i64 {

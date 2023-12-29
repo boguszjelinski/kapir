@@ -65,8 +65,7 @@ async fn main() -> std::io::Result<()> {
 
     //let pool: Pool = mysql_async::Pool::new("mysql://kabina:kaboot@localhost:3306/kabina");
     let pool = Pool::new(dbhost).unwrap();
-    //let mut conn = pool.get_conn().unwrap();
-    
+        
     init_dist_service(&pool).await;
 
     HttpServer::new(move || {
@@ -80,7 +79,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_order) // curl -u cab2:cab2 http://localhost:8080/orders/51150
             .service(get_order2) // curl -u cab2:cab2 http://localhost:8080/orders
             .service(get_order3) // curl -u cust1:cust1 http://localhost:8080/orders/
-            .service(put_order) // curl -H "Content-type: application/json" -X PUT -u cust1:cust1 -d '{ "id":775791, "status":"ASSIGNED", "From":0,"To":0,"Wait":0,"Loss":0}' http://localhost:8080/orders
+            .service(put_order) // curl -H "Content-type: application/json" -X PUT -u cust1:cust1 -d '{ "Id":775791, "Status":"ASSIGNED", "From":0,"To":0,"Wait":0,"Loss":0}' http://localhost:8080/orders
             .service(put_order2)
             .service(post_order) //curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u "cust28:cust28" -d '{"From":4001, "To":4002, "Wait":10, "Loss":90, "Shared": true}' http://localhost:8080/orders
             .service(post_order2) 
@@ -362,4 +361,3 @@ fn setup_logger(file_path: String) {
     // once you are done.
     let _handle = log4rs::init_config(config);
 }
-
