@@ -8,6 +8,8 @@ use crate::model::{Cab, CabStatus, Order, Stop, Leg, Route, RouteStatus, Stats, 
 use crate::distance::{STOPS, DIST};
 use crate::stats::{add_avg_pickup, add_avg_complete, save_status};
 
+pub const STOP_WAIT : i32 = 1;
+
 pub fn select_cab(user_id: i64, c: &mut PooledConn, id: i64) -> Cab {
     debug!("select_cab, user_id={}", user_id);
     let res = c.exec_map("SELECT location, status FROM cab WHERE id=?", (id,), 
@@ -75,7 +77,8 @@ pub fn select_route_by_cab_ref(c: &mut PooledConn, id: i64) -> Route {
     // TODO: cab's name
     // TODO: LIMIT 1, an error rather if there are more
     // SELECT r.id, c.name FROM route r, cab c WHERE r.cab_id=$1 AND r.status=1 and r.cab_id=c.id ORDER BY id LIMIT 1
-    let sql = format!("SELECT id FROM route WHERE cab_id={} AND status=1 ORDER BY id LIMIT 1", id);
+    // !! Kab will need to show 1 & 5 separately when "assign on last leg" will be implemented in Kern
+    let sql = format!("SELECT id FROM route WHERE cab_id={} AND (status=1 or status=5) ORDER BY id LIMIT 1", id);
 
     let res: Result<Option<i64>>  = c.query_first(sql);
     return match res {
@@ -119,15 +122,7 @@ pub fn select_route_ref(c: &mut PooledConn, id: i64) -> Route {
         }
         Err(_) => { }
     };
-    // Cab details
-    let res 
-        = c.exec_map("SELECT c.id, c.location, c.status FROM cab c, route r WHERE r.id=? and c.id = r.cab_id", (id,), 
-        |(id, location, status)| { Cab { id, location, status: get_cab_status(status) }});
-    let cab: Cab = match res {
-        Ok(row) => { row[0] }
-        Err(_err) => { Cab { ..Default::default() }}
-    };
-    return Route { id, status: RouteStatus::ASSIGNED, legs, cab }
+    return Route { id, status: RouteStatus::ASSIGNED, legs, cab: select_cab_by_route_id(c, id) }
 }
 
 pub fn select_route_with_orders(user_id: i64, c: &mut PooledConn, id: i64) -> RouteWithOrders {
@@ -184,13 +179,13 @@ pub fn select_orders_by_what(c: &mut PooledConn, id: i64, clause: &str) -> Vec<O
     let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, received, started, completed, \
         at_time, eta, o.status, cab_id, customer_id, o.id, c.location, c.status, route_id, leg_id \
         FROM taxi_order as o LEFT JOIN cab as c ON o.cab_id = c.id WHERE ".to_string() 
-        + clause + " AND (o.status<3 OR o.status>6) ORDER BY received desc";
+        + clause + " ORDER BY received desc"; // AND (o.status<3 OR o.status>6)
     let mut ret: Vec<Order> = Vec::new();
     let selected: Result<Vec<Row>> = c.exec(sql, (id,));
     match selected {
         Ok(sel) => {
             for r in sel {
-                let cab_id: Option<i64> = r.get(13);
+                let cab_id: Option<i64> = r.get(13).unwrap();
                 ret.push(Order {
                     id: r.get(15).unwrap(),
                     from: r.get(0).unwrap(),
@@ -291,11 +286,15 @@ pub fn insert_order(user_id: i64, c: &mut PooledConn, o: Order) -> Order {
     }                    
 }
 
-pub fn select_traffik(user_id: i64, c: &mut PooledConn, stand_id: i64) -> StopTraffic {
-    
+pub fn select_traffik(user_id: i64, c: &mut PooledConn, stand_id: i64) -> StopTraffic {  
     let stop_id:i32 = stand_id as i32;
-    let leg_sql = "SELECT id, from_stand, to_stand, place, distance, started, completed, status, route_id \
-                            FROM leg WHERE (from_stand=? OR to_stand=?) AND status IN (1,2,5)".to_string(); // 1=ASSIGNED, ACCEPTED, STARTED
+    // the inner part of the SQL finds routes that have something to do with the stop and will be visited, are not passed
+    // the outer part receives all legs of these routes, not only these with that stop (we have to count ETA) 
+    let leg_sql = 
+        "SELECT l.id, l.from_stand, l.to_stand, l.place, l.distance, l.started, l.completed, l.status, l.route_id \
+        FROM leg l WHERE l.route_id IN ( \
+            SELECT route_id FROM leg WHERE (from_stand=? AND status in (1,2)) OR (to_stand=? AND status IN (1,2,5)) ) \
+        AND l.status IN (1,2,5) ORDER by l.route_id, l.place".to_string(); // 1=ASSIGNED, ACCEPTED, STARTED
     let res = c.exec_map(leg_sql, (stop_id, stop_id,), 
         |(id, from, to, place, dist, started, completed, status, route_id)| {
             Leg { 
@@ -314,23 +313,28 @@ pub fn select_traffik(user_id: i64, c: &mut PooledConn, stand_id: i64) -> StopTr
         Ok(l) => { l }
         Err(_) => { Vec::new() }
     };
-    
     let mut routes: Vec<RouteWithEta> = vec![];
-    
-    'outer: for (i, l) in legs.iter().enumerate() {
-        // find duplicates
-        for (j, l2) in legs.iter().enumerate() {
-            if j <= i { continue; } // checked earlier
-            if l2.route_id == l.route_id { 
-                continue 'outer; // ignore it
+    if legs.len() > 0 {
+        // partition the data into routes
+        let mut route_legs: Vec<Leg> = Vec::new();
+        let mut prev_route_id: i64 = legs[0].route_id;
+        for l in legs.iter() {
+            if l.route_id != prev_route_id {
+                if route_legs.len() > 0 {
+                    routes.push(get_route_with_eta(c, prev_route_id, stop_id, route_legs));
+                    route_legs = Vec::new();
+                }
+                prev_route_id = l.route_id;
             }
+            route_legs.push(*l);
         }
-        let r = select_route_ref(c, l.route_id);
-        println!("DEBUG: l.route_id={}", l.route_id);
-        routes.push(RouteWithEta{eta: calculate_eta(stop_id as i32, &r), route: r});
+        // last route
+        if route_legs.len() > 0 {
+            routes.push(get_route_with_eta(c, prev_route_id, stop_id, route_legs));
+        }
+        // the nearest cab should appear first
+        routes.sort_by(|a, b| a.eta.cmp(&b.eta));
     }
-    // the nearest cab should appear first
-    routes.sort_by(|a, b| a.eta.cmp(&b.eta));
     let st = unsafe { STOPS.iter().find(| &x| x.id == stand_id) };
     let stop: Option<Stop> = match st {
         Some(s) => { Some( s.clone() ) }
@@ -343,6 +347,23 @@ pub fn select_traffik(user_id: i64, c: &mut PooledConn, stand_id: i64) -> StopTr
     let cabs = select_cabs_by_stop(user_id, c, stop_id as i32);
     return StopTraffic{ stop, routes, cabs };
 } 
+
+pub fn select_cab_by_route_id(c: &mut PooledConn, id: i64) -> Cab {
+    // Cab details
+    let res 
+        = c.exec_map("SELECT c.id, c.location, c.status FROM cab c, route r WHERE r.id=? and c.id = r.cab_id", (id,), 
+        |(id, location, status)| { Cab { id, location, status: get_cab_status(status) }});
+    return match res {
+        Ok(row) => { row[0] }
+        Err(_err) => { Cab { ..Default::default() }}
+    };
+}
+
+pub fn get_route_with_eta(c: &mut PooledConn, id: i64, stop_id: i32, legs: Vec<Leg>) -> RouteWithEta {
+    let cab = select_cab_by_route_id(c, id);
+    let route = Route { id, status: RouteStatus::ASSIGNED, legs, cab };
+    return RouteWithEta{eta: calculate_eta(stop_id as i32, &route), route};
+}
 
 pub fn select_stats(user_id: i64, c: &mut PooledConn, usr_id: i64) -> Stats {
     debug!("select_stats, user_id={}", user_id);
@@ -397,7 +418,6 @@ pub fn calculate_eta(stand_id: i32, route: &Route) -> i16 {
         return -1;
     }
     let mut eta = 0;
-    let mut wait_legs: i16 = 0; // each leg takes 15secs more, TODO: check why
     let route_cpy = route.clone();
     for leg in route_cpy.legs {
         if leg.from == stand_id {
@@ -408,22 +428,20 @@ pub fn calculate_eta(stand_id: i32, route: &Route) -> i16 {
         //let distance = unsafe { DIST[leg.From][leg.To] }; 
         if leg.status == RouteStatus::STARTED {
             if leg.started == None { // some error
-            eta += leg.dist;
+                eta += leg.dist + STOP_WAIT;
             } else {
-            let minutes: i32 = (get_elapsed(leg.started)/60) as i32;
-            if minutes != -1 {
-                eta += cmp::max(leg.dist - minutes, 0);
-            }
-            // it has taken longer than planned
-            // TASK: assumption 1km = 1min, see also CabRunnable: waitMins(getDistance
+                let minutes: i32 = (get_elapsed(leg.started)/60) as i32;
+                if minutes != -1 {
+                    eta += cmp::max(leg.dist - minutes, 0);
+                }
+                // it has taken longer than planned
+                // TASK: assumption 1km = 1min, see also CabRunnable: waitMins(getDistance
             }
         } else if leg.status == RouteStatus::ASSIGNED {
-            eta += leg.dist;
+            eta += leg.dist + STOP_WAIT;
         }
-        wait_legs += 1;
-        eta += leg.dist;
     }
-    return eta as i16 + ((wait_legs as f32 * 0.5) as i16);
+    return eta as i16 - STOP_WAIT as i16; // minus wait time at the stand_id
 }
 
 pub fn get_elapsed(val: Option<NaiveDateTime>) -> i64 {
