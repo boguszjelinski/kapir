@@ -95,7 +95,8 @@ pub fn assign_to_route(user_id: i64, c: &mut PooledConn, o: CabAssign) -> bool {
     if ord.id == -1 {
         return false;
     }
-    let count = check_result(c.exec_iter("UPDATE taxi_order SET cab_id=?, route_id=?, leg_id=?, status=7 WHERE id=?", // 7=PICKEDUP
+    let count = check_result(c.exec_iter(
+        "UPDATE taxi_order SET cab_id=?, route_id=?, leg_id=?, status=7, in_pool=true WHERE id=?", // 7=PICKEDUP
                                 (user_id, route.id, leg_id, ord.id)));
     if count == 1 {
         update_avail_seats(c, route.id, &route.legs, o.from, o.to, 1);
