@@ -18,9 +18,10 @@ use log4rs::{
 };
 mod service;
 use service::{select_cab, select_order, update_cab, update_order, insert_order, select_orders,
-            init_read_stops, update_leg, update_route, select_route_by_id, select_route_by_cab, select_traffik, select_stats};
+            init_read_stops, update_leg, update_route, select_route_by_id, select_route_by_cab,
+            select_traffik, select_stats, assign_free_cab, assign_to_route};
 mod model;
-use model::{Cab, Order, Leg, Route};
+use model::{Cab, Order, Leg, Route, CabAssign};
 mod distance;
 use distance::init_distance;
 use crate::{distance::STOPS, service::select_route_with_orders};
@@ -96,6 +97,10 @@ async fn main() -> std::io::Result<()> {
             .service(get_stops2)
             .service(get_traffic)
             .service(get_stats)
+            .service(post_assign_free_cab) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u cab1:cab1 -d '{ "CustId":100, "From":0, "To":0,"Shared":true,"Loss":10}' http://localhost:8080/assignfreecab
+            .service(post_assign_free_cab2)
+            .service(post_assign_to_route) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u cab1:cab1 -d '{ "CustId":100, "From":0, "To":0,"Shared":true,"Loss":10}' http://localhost:8080/assigntoroute
+            .service(post_assign_to_route2)
     })
     .bind((bind_host, bind_port))?
     .run()
@@ -155,6 +160,26 @@ async fn get_route_with_orders(auth: BasicAuth, db_pool: web::Data<Pool>) -> Res
 #[get("/routeswithorders/")] // just to keep compatibility with Java
 async fn get_route_with_orders2(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     return just_get_route_with_orders(auth, db_pool).await;
+}
+
+#[post("/assignfreecab")]
+async fn post_assign_free_cab(obj: web::Json<CabAssign>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return just_assign_free_cab(obj, auth, db_pool).await;
+}
+
+#[post("/assignfreecab/")]
+async fn post_assign_free_cab2(obj: web::Json<CabAssign>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return just_assign_free_cab(obj, auth, db_pool).await;
+}
+
+#[post("/assigntoroute")]
+async fn post_assign_to_route(obj: web::Json<CabAssign>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return just_assign_to_route(obj, auth, db_pool).await;
+}
+
+#[post("/assigntoroute/")]
+async fn post_assign_to_route2(obj: web::Json<CabAssign>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    return just_assign_to_route(obj, auth, db_pool).await;
 }
 
 #[put("/routes")]
@@ -235,6 +260,16 @@ async fn just_put_cab(obj: web::Json<Cab>, auth: BasicAuth, db_pool: web::Data<P
     return Ok(HttpResponse::Forbidden().json("Not owner"));
 }
 
+async fn just_assign_free_cab(obj: web::Json<CabAssign>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    let o: CabAssign = obj.into_inner();
+    return insert_object(get_auth_id(auth.user_id()), o, db_pool, assign_free_cab);
+}
+
+async fn just_assign_to_route(obj: web::Json<CabAssign>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
+    let o: CabAssign = obj.into_inner();
+    return insert_object(get_auth_id(auth.user_id()), o, db_pool, assign_to_route);
+}
+
 async fn just_put_leg(obj: web::Json<Leg>, auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     let o: Leg = obj.into_inner();
     // authorization continues in service
@@ -308,6 +343,18 @@ fn update_object<T>(user_id: i64, o: T, db_pool: web::Data<Pool>, f: impl FnOnce
     match db_pool.get_conn() {
         Ok(mut c) => {
             let obj: T = f(user_id, &mut c, o) as T;
+            return Ok(HttpResponse::Ok().json(obj));
+        }
+        Err(err) => { return Ok(HttpResponse::Ok().json(format!("{}", err))); }
+    };
+}
+
+fn insert_object<T>(user_id: i64, o: T, db_pool: web::Data<Pool>, f: impl FnOnce(i64, &mut PooledConn, T) -> bool) 
+            -> Result<HttpResponse, Error>
+            where T: Serialize { 
+    match db_pool.get_conn() {
+        Ok(mut c) => {
+            let obj: bool = f(user_id, &mut c, o) as bool;
             return Ok(HttpResponse::Ok().json(obj));
         }
         Err(err) => { return Ok(HttpResponse::Ok().json(format!("{}", err))); }

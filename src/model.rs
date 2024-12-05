@@ -7,7 +7,19 @@ use serde::{Deserialize, Serialize};
 pub struct Cab {
     pub id: i64,
 	pub location: i32,
-    pub status: CabStatus
+    pub status: CabStatus,
+    pub seats: i8
+}
+
+
+#[derive(Debug, Copy, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct CabAssign {
+    pub cust_id: i64,
+    pub from: i32,
+    pub to: i32,
+    pub loss: i32,
+    pub shared: bool
 }
 
 #[repr(i32)]
@@ -31,9 +43,10 @@ pub fn get_cab_status(idx: i32) -> CabStatus {
 
 impl Default for Cab {
     fn default() -> Cab { 
-        Cab { id: -1, location: -1, status: CabStatus::CHARGING }
+        Cab { id: -1, location: -1, status: CabStatus::CHARGING, seats: -1 }
     }
 }
+
 // ORDER
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -116,7 +129,7 @@ impl Default for Order {
             at_time: None,
             eta: 0,
             status: OrderStatus::REFUSED,
-            cab: Cab { id: -1, location: -1, status: CabStatus::CHARGING },
+            cab: Cab { id: -1, location: -1, status: CabStatus::CHARGING, seats: -1 },
             route_id: -1,
             leg_id: -1,
         //    route: Route { ..Default::default() },
@@ -161,7 +174,8 @@ pub struct Leg {
     pub started: Option<NaiveDateTime>,
     #[serde(default)]
     pub completed: Option<NaiveDateTime>,
-    pub status: RouteStatus
+    pub status: RouteStatus,
+    pub passengers: i32
 }
 
 #[repr(i32)]
@@ -211,7 +225,8 @@ impl Default for Route {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct RouteWithOrders {
     pub route: Route,
-    pub orders: Vec<Order>
+    pub orders: Vec<Order>,
+    pub cab: Cab // for Kaut app
 }
 
 #[derive(Clone, Deserialize, Serialize)]

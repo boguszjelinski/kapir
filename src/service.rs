@@ -1,9 +1,9 @@
-use std::cmp;
+use std::{cmp, usize};
 use chrono::{NaiveDateTime, Local};
 use mysql::*;
 use mysql::prelude::*;
 use log::{debug, info, warn};
-use crate::model::{Cab, CabStatus, Order, Stop, Leg, Route, RouteStatus, Stats, Stat,
+use crate::model::{CabAssign, Cab, CabStatus, Order, Stop, Leg, Route, RouteStatus, Stats, Stat,
         get_cab_status, get_order_status, get_route_status, OrderStatus, RouteWithOrders, RouteWithEta, StopTraffic};
 use crate::distance::{STOPS, DIST};
 use crate::stats::{add_avg_pickup, add_avg_complete, save_status};
@@ -12,8 +12,8 @@ pub const STOP_WAIT : i32 = 1;
 
 pub fn select_cab(user_id: i64, c: &mut PooledConn, id: i64) -> Cab {
     debug!("select_cab, user_id={}", user_id);
-    let res = c.exec_map("SELECT location, status FROM cab WHERE id=?", (id,), 
-            |(location, stat)| { Cab { id, location, status: get_cab_status(stat)}});
+    let res = c.exec_map("SELECT location, status, seats FROM cab WHERE id=?", (id,), 
+            |(location, stat, seats)| { Cab { id, location, status: get_cab_status(stat), seats}});
     match res {
         Ok(rows) => {
            return rows[0];
@@ -24,8 +24,8 @@ pub fn select_cab(user_id: i64, c: &mut PooledConn, id: i64) -> Cab {
 
 pub fn select_cabs_by_stop(user_id: i64, c: &mut PooledConn, stop_id: i32) -> Vec<Cab> {
     debug!("select_cabs_by_stop, user_id={}", user_id);
-    let res = c.exec_map("SELECT id  FROM cab WHERE location=? AND status=1", (stop_id,), 
-                                |(id,)| { Cab { id, location: stop_id, status: get_cab_status(1)}});
+    let res = c.exec_map("SELECT id, seats FROM cab WHERE location=? AND status=1", (stop_id,), 
+                                |(id, seats)| { Cab { id, location: stop_id, status: get_cab_status(1), seats}});
     match res {
         Ok(rows) => {
             return rows;
@@ -36,13 +36,137 @@ pub fn select_cabs_by_stop(user_id: i64, c: &mut PooledConn, stop_id: i32) -> Ve
 
 pub fn update_cab(user_id: i64, c: &mut PooledConn, cab: Cab) -> Cab {
     if user_id == cab.id {
-        let res = c.exec_iter("UPDATE cab SET status=?, location=? WHERE id=?", 
-                                                        (cab.status as i32, cab.location, cab.id));
+        let res = 
+            c.exec_iter("UPDATE cab SET status=?, location=? WHERE id=?", 
+                        (cab.status as i32, cab.location, cab.id));
         check_result(res);
     } else {
         info!("update_cab not authorised, user_id={}, cab_id={}", user_id, cab.id);
     }
     return cab.clone();
+}
+
+pub fn assign_free_cab(user_id: i64, c: &mut PooledConn, o: CabAssign) -> bool {
+    if o.from == o.to {
+        warn!("from == to, Kaut shouldn't allow this");
+        return false;
+    }
+    let res = c.exec_drop(
+        "INSERT INTO freetaxi_order (from_stand, to_stand, shared, max_loss, cab_id, customer_id, received) VALUES ( \
+                :from_stand, :to_stand, :shared, :max_loss, :cab_id, :customer_id, :received)",
+        params! {
+            "from_stand" => o.from,
+            "to_stand" => o.to,
+            "max_loss" => o.loss,
+            "shared"   => o.shared,
+            "received" => Local::now().naive_local(),
+            "cab_id"=> user_id,
+            "customer_id" => o.cust_id
+        },
+    )
+    .and_then(|_| Ok(c.last_insert_id()));
+    
+    return match res {
+        Ok(_) => { true }
+        Err(_) => { false }
+    };
+}
+
+pub fn assign_to_route(user_id: i64, c: &mut PooledConn, o: CabAssign) -> bool {
+    // if distance meets loss
+    // if passengers met (seats), Kaut should checkit too
+    // check if leg not started
+    // find route_id (could be sent by cab) and leg_id (the same)
+    // create order
+
+    let fake_cab: Cab = Cab { id: user_id, location: o.from, status: CabStatus::ASSIGNED, seats: -1};
+    let o: Order = Order { id: -1, from: o.from, to: o.to, wait: -1, loss: o.loss, distance: unsafe {
+        DIST[o.from as usize][o.to as usize] as i32}, shared: o.shared, in_pool: true, status: OrderStatus::PICKEDUP, 
+        received: Some(Local::now().naive_local()), started: None, completed: None, at_time: None, eta: 0, cab: fake_cab, 
+        cust_id: o.cust_id, route_id: -1, leg_id: -1 };
+    let route = select_route_by_cab(user_id, c, user_id);
+    if !enough_place(&route.legs, o.from, o.to, route.cab.seats as i32, 1) { // TODO: 1 -> Kaut should allow for co-passengers
+        warn!("Not enough seats for route extension: user_id:{}, from: {}, to: {}", user_id, o.from, o.to);
+        return false;
+    }
+    let leg_id = find_leg_at_stop(&route.legs, o.from);
+
+    let ord = insert_order(o.cust_id, c, o);
+    if ord.id == -1 {
+        return false;
+    }
+    let count = check_result(c.exec_iter("UPDATE taxi_order SET cab_id=?, route_id=?, leg_id=?, status=7 WHERE id=?", // 7=PICKEDUP
+                                (user_id, route.id, leg_id, ord.id)));
+    if count == 1 {
+        update_avail_seats(c, route.id, &route.legs, o.from, o.to, 1);
+        return true;
+    } else {
+        warn!("Update taxi_order went wrong, cab_id={}, route_id={}, leg_id={}, id={}",
+                user_id, route.id, leg_id, ord.id);
+        return false;
+    }
+
+}
+
+fn find_leg_at_stop(legs: &Vec<Leg>, stop: i32) -> i64 {
+    if legs.len() == 0 {
+        return -1;
+    }
+    for l in legs {
+        if l.from == stop && l.status != RouteStatus::COMPLETED { // just !completed ? maybe more specific
+            return l.id;
+        }
+    }
+    return -1;
+}
+
+fn enough_place(legs: &Vec<Leg>, from: i32, to: i32, seats: i32, place_needed: i32) -> bool {
+    if legs.len() == 0 {
+        return false;
+    }
+    let mut start_found: bool = false;
+    for l in legs {
+        if l.from == from && l.status != RouteStatus::COMPLETED && l.status != RouteStatus::STARTED {
+            start_found = true;
+        }
+        if start_found && l.passengers + place_needed > seats { // >= at "to"can be in the same leg
+            return false;
+        }
+        if start_found && l.to == to {
+            return true;
+        }
+    }
+    if !start_found {
+        return false;
+    }
+    warn!("Checking enough place - 'to' not found");
+    return true;
+}
+
+fn update_avail_seats(c: &mut PooledConn, route_id: i64, legs: &Vec<Leg>, from: i32, to: i32, place_needed: i32) -> i32 {
+    let max: i32 = 2000;
+    if legs.len() == 0 {
+        return 0;
+    }
+    let mut start_found: bool = false;
+    let mut start: i32 = 0;
+    let mut stop: i32 = max; // just big enough
+    for l in legs {
+        if l.from == from && l.status != RouteStatus::COMPLETED && l.status != RouteStatus::STARTED {
+            start_found = true;
+            start = l.place;
+        }
+        if start_found && l.to == to {
+            stop = l.place;
+            break;
+        }
+    }
+    if !start_found {
+        return 0;
+    }
+    check_result(c.exec_iter("UPDATE leg SET passengers = passengers - ? WHERE route_id = ? AND place  >= ? AND place <= ?", 
+                            (place_needed, route_id, start, stop)));
+    return stop - start + 1;
 }
 
 pub fn update_leg(user_id: i64, c: &mut PooledConn, leg: Leg) -> Leg {
@@ -100,8 +224,9 @@ pub fn select_route_by_id(user_id: i64, c: &mut PooledConn, id: i64) -> Route {
 
 pub fn select_route_ref(c: &mut PooledConn, id: i64) -> Route {
     // TODO: maybe a join and one DB call?              started, completed, 
-    let res: Result<Vec<Row>> = c.exec("SELECT id, from_stand, to_stand, place, distance, started, completed, status \
-                                                        FROM leg WHERE route_id=? ORDER by place", (id,));
+    let res: Result<Vec<Row>> = c.exec(
+        "SELECT id, from_stand, to_stand, place, distance, started, completed, status, passengers \
+                FROM leg WHERE route_id=? ORDER by place", (id,));
     let mut legs: Vec<Leg> = Vec::new();
     match res {
         Ok(rows) => { 
@@ -110,13 +235,14 @@ pub fn select_route_ref(c: &mut PooledConn, id: i64) -> Route {
                     Leg { 
                         id: r.get(0).unwrap(), 
                         route_id: id, 
-                        from:   r.get(1).unwrap(), 
-                        to:     r.get(2).unwrap(), 
-                        place: r.get(3).unwrap(), 
-                        dist:   r.get(4).unwrap(), 
-                        started: get_naivedate(&r, 5), 
+                        from:   r.get(1).unwrap(),
+                        to:     r.get(2).unwrap(),
+                        place: r.get(3).unwrap(),
+                        dist:   r.get(4).unwrap(),
+                        started: get_naivedate(&r, 5),
                         completed: get_naivedate(&r, 6),
-                        status: get_route_status(r.get(7).unwrap())
+                        status: get_route_status(r.get(7).unwrap()),
+                        passengers: r.get(8).unwrap()
                     });
             }
         }
@@ -128,7 +254,8 @@ pub fn select_route_ref(c: &mut PooledConn, id: i64) -> Route {
 pub fn select_route_with_orders(user_id: i64, c: &mut PooledConn, id: i64) -> RouteWithOrders {
     let route: Route = select_route_by_cab_ref(c, id);
     let orders: Vec<Order> = select_orders_by_route(user_id, c, route.id);
-    return RouteWithOrders {route, orders};
+    let cab: Cab = select_cab(user_id, c, id);
+    return RouteWithOrders {route, orders, cab};
 }
 
 pub fn select_order(user_id: i64, c: &mut PooledConn, id: i64) -> Order {
@@ -177,7 +304,7 @@ fn get_i64(row: &Row, index: usize) -> i64 {
 
 pub fn select_orders_by_what(c: &mut PooledConn, id: i64, clause: &str) -> Vec<Order> {
     let sql = "SELECT from_stand, to_stand, max_wait, max_loss, distance, shared, in_pool, received, started, completed, \
-        at_time, eta, o.status, cab_id, customer_id, o.id, c.location, c.status, route_id, leg_id \
+        at_time, eta, o.status, cab_id, customer_id, o.id, c.location, c.status, route_id, leg_id, c.seats \
         FROM taxi_order as o LEFT JOIN cab as c ON o.cab_id = c.id WHERE ".to_string() 
         + clause + " ORDER BY received desc"; // AND (o.status<3 OR o.status>6)
     let mut ret: Vec<Order> = Vec::new();
@@ -204,10 +331,10 @@ pub fn select_orders_by_what(c: &mut PooledConn, id: i64, clause: &str) -> Vec<O
                     cab: match cab_id {
                         Some(cab_id) => { 
                             Cab { id: cab_id, location: r.get(16).unwrap(), 
-                                    status: get_cab_status(r.get(17).unwrap()) }
+                                    status: get_cab_status(r.get(17).unwrap()), seats: r.get(20).unwrap() }
                         }
                         None => { // not assigned
-                            Cab { id: -1, location: -1, status: CabStatus::CHARGING }
+                            Cab { id: -1, location: -1, status: CabStatus::CHARGING, seats: -1 }
                         }
                     },
                     cust_id: r.get(14).unwrap(),
@@ -291,12 +418,12 @@ pub fn select_traffik(user_id: i64, c: &mut PooledConn, stand_id: i64) -> StopTr
     // the inner part of the SQL finds routes that have something to do with the stop and will be visited, are not passed
     // the outer part receives all legs of these routes, not only these with that stop (we have to count ETA) 
     let leg_sql = 
-        "SELECT l.id, l.from_stand, l.to_stand, l.place, l.distance, l.started, l.completed, l.status, l.route_id \
+        "SELECT l.id, l.from_stand, l.to_stand, l.place, l.distance, l.started, l.completed, l.status, l.route_id, l.passengers \
         FROM leg l WHERE l.route_id IN ( \
             SELECT route_id FROM leg WHERE (from_stand=? AND status in (1,2)) OR (to_stand=? AND status IN (1,2,5)) ) \
         AND l.status IN (1,2,5) ORDER by l.route_id, l.place".to_string(); // 1=ASSIGNED, ACCEPTED, STARTED
     let res = c.exec_map(leg_sql, (stop_id, stop_id,), 
-        |(id, from, to, place, dist, started, completed, status, route_id)| {
+        |(id, from, to, place, dist, started, completed, status, route_id, passengers)| {
             Leg { 
                 id, 
                 from, 
@@ -306,7 +433,8 @@ pub fn select_traffik(user_id: i64, c: &mut PooledConn, stand_id: i64) -> StopTr
                 started, 
                 completed, 
                 status: get_route_status(status),
-                route_id
+                route_id,
+                passengers
             }
         });
     let legs = match res {
@@ -351,8 +479,8 @@ pub fn select_traffik(user_id: i64, c: &mut PooledConn, stand_id: i64) -> StopTr
 pub fn select_cab_by_route_id(c: &mut PooledConn, id: i64) -> Cab {
     // Cab details
     let res 
-        = c.exec_map("SELECT c.id, c.location, c.status FROM cab c, route r WHERE r.id=? and c.id = r.cab_id", (id,), 
-        |(id, location, status)| { Cab { id, location, status: get_cab_status(status) }});
+        = c.exec_map("SELECT c.id, c.location, c.status, c.seats FROM cab c, route r WHERE r.id=? and c.id = r.cab_id", (id,), 
+        |(id, location, status, seats)| { Cab { id, location, status: get_cab_status(status), seats }});
     return match res {
         Ok(row) => { row[0] }
         Err(_err) => { Cab { ..Default::default() }}
