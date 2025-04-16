@@ -1,15 +1,15 @@
-use std::fmt;
 use self::Stat::*;
-use std::slice::Iter;
 use log::info;
+use std::fmt;
+use std::slice::Iter;
 
-pub static mut STATS: [i64; AvgOrderCompleteTime as usize + 1] 
-                        = [0; AvgOrderCompleteTime as usize + 1];
+pub static mut STATS: [i64; AvgOrderCompleteTime as usize + 1] =
+    [0; AvgOrderCompleteTime as usize + 1];
 const INT: Vec<i64> = vec![];
-pub static mut AVG_ELEMENTS: [Vec<i64>; AvgOrderCompleteTime as usize + 1] 
-                        = [INT; AvgOrderCompleteTime as usize + 1];
+pub static mut AVG_ELEMENTS: [Vec<i64>; AvgOrderCompleteTime as usize + 1] =
+    [INT; AvgOrderCompleteTime as usize + 1];
 
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum Stat {
     AvgOrderPickupTime,
     AvgOrderCompleteTime,
@@ -17,10 +17,7 @@ pub enum Stat {
 
 impl Stat {
     pub fn iterator() -> Iter<'static, Stat> {
-        static RET: [Stat; 2] = [
-            AvgOrderPickupTime,
-            AvgOrderCompleteTime,
-        ];
+        static RET: [Stat; 2] = [AvgOrderPickupTime, AvgOrderCompleteTime];
         RET.iter()
     }
 }
@@ -34,14 +31,18 @@ impl fmt::Display for Stat {
 }
 
 pub fn update_val(key: Stat, value: i64) {
-    unsafe { STATS[key as usize] = value; }
+    unsafe {
+        STATS[key as usize] = value;
+    }
 }
 
 pub fn add_avg_element(key: Stat, time: i64) {
-    unsafe { AVG_ELEMENTS[key as usize].push(time);}
+    unsafe {
+        AVG_ELEMENTS[key as usize].push(time);
+    }
 }
 
-pub fn count_average(key: Stat) -> i64 {   
+pub fn count_average(key: Stat) -> i64 {
     unsafe {
         let list: Vec<i64> = AVG_ELEMENTS[key as usize].to_vec();
         let length = list.len();
@@ -52,19 +53,30 @@ pub fn count_average(key: Stat) -> i64 {
         for i in list {
             suma += i;
         }
-        
+
         return (suma / length as i64) as i64;
-    } 
+    }
 }
 
 pub fn save_status() -> String {
     let mut sql: String = String::from("");
-    update_val(Stat::AvgOrderPickupTime, count_average(Stat::AvgOrderPickupTime));
-    update_val(Stat::AvgOrderCompleteTime, count_average(Stat::AvgOrderCompleteTime));
+    update_val(
+        Stat::AvgOrderPickupTime,
+        count_average(Stat::AvgOrderPickupTime),
+    );
+    update_val(
+        Stat::AvgOrderCompleteTime,
+        count_average(Stat::AvgOrderCompleteTime),
+    );
     unsafe {
-    for s in Stat::iterator() {
-        sql += &format!("UPDATE stat SET int_val={} WHERE UPPER(name)=UPPER('{}');", STATS[*s as usize], s.to_string());
-    }}
+        for s in Stat::iterator() {
+            sql += &format!(
+                "UPDATE stat SET int_val={} WHERE UPPER(name)=UPPER('{}');",
+                STATS[*s as usize],
+                s.to_string()
+            );
+        }
+    }
     return sql;
 }
 

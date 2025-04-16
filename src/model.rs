@@ -1,16 +1,15 @@
-use std::fmt;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Cab {
     pub id: i64,
-	pub location: i32,
+    pub location: i32,
     pub status: CabStatus,
-    pub seats: i8
+    pub seats: i8,
 }
-
 
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -19,7 +18,7 @@ pub struct CabAssign {
     pub from: i32,
     pub to: i32,
     pub loss: i32,
-    pub shared: bool
+    pub shared: bool,
 }
 
 #[repr(i32)]
@@ -27,7 +26,7 @@ pub struct CabAssign {
 pub enum CabStatus {
     ASSIGNED = 0,
     FREE = 1,
-    CHARGING =2, // out of order, ...
+    CHARGING = 2, // out of order, ...
 }
 
 impl fmt::Display for CabStatus {
@@ -38,12 +37,17 @@ impl fmt::Display for CabStatus {
 
 pub fn get_cab_status(idx: i32) -> CabStatus {
     let s: CabStatus = unsafe { ::std::mem::transmute(idx) };
-    return s
+    return s;
 }
 
 impl Default for Cab {
-    fn default() -> Cab { 
-        Cab { id: -1, location: -1, status: CabStatus::CHARGING, seats: -1 }
+    fn default() -> Cab {
+        Cab {
+            id: -1,
+            location: -1,
+            status: CabStatus::CHARGING,
+            seats: -1,
+        }
     }
 }
 
@@ -53,12 +57,12 @@ impl Default for Cab {
 pub struct Order {
     #[serde(default)]
     pub id: i64,
-	pub from: i32,
+    pub from: i32,
     pub to: i32,
-	pub wait: i32,
-	pub loss: i32,
+    pub wait: i32,
+    pub loss: i32,
     #[serde(default)]
-	pub distance: i32,
+    pub distance: i32,
     #[serde(default)]
     pub shared: bool,
     #[serde(default)]
@@ -83,33 +87,35 @@ pub struct Order {
     pub route_id: i64,
     #[serde(default)]
     pub leg_id: i64,
-//    #[serde(default)]
-//    pub route: Route,
-//    #[serde(default)]
-//    pub leg: Leg,
+    //    #[serde(default)]
+    //    pub route: Route,
+    //    #[serde(default)]
+    //    pub leg: Leg,
 }
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub enum OrderStatus {
     RECEIVED = 0,
-	ASSIGNED = 1,
-	ACCEPTED = 2,  
-	CANCELLED= 3,
-	REJECTED = 4,
-	ABANDONED= 5,
-	REFUSED  = 6,
-	PICKEDUP = 7,
-	COMPLETED= 8,
+    ASSIGNED = 1,
+    ACCEPTED = 2,
+    CANCELLED = 3,
+    REJECTED = 4,
+    ABANDONED = 5,
+    REFUSED = 6,
+    PICKEDUP = 7,
+    COMPLETED = 8,
 }
 
 impl Default for OrderStatus {
-    fn default() -> Self { OrderStatus::REFUSED }
+    fn default() -> Self {
+        OrderStatus::REFUSED
+    }
 }
 
 pub fn get_order_status(idx: i32) -> OrderStatus {
     let s: OrderStatus = unsafe { ::std::mem::transmute(idx) };
-    return s
+    return s;
 }
 
 impl Default for Order {
@@ -129,11 +135,16 @@ impl Default for Order {
             at_time: None,
             eta: 0,
             status: OrderStatus::REFUSED,
-            cab: Cab { id: -1, location: -1, status: CabStatus::CHARGING, seats: -1 },
+            cab: Cab {
+                id: -1,
+                location: -1,
+                status: CabStatus::CHARGING,
+                seats: -1,
+            },
             route_id: -1,
             leg_id: -1,
-        //    route: Route { ..Default::default() },
-        //    leg: Leg { ..Default::default()}, 
+            //    route: Route { ..Default::default() },
+            //    leg: Leg { ..Default::default()},
             cust_id: -1,
         }
     }
@@ -150,7 +161,7 @@ impl fmt::Display for OrderStatus {
 pub struct Stop {
     pub id: i64,
     pub bearing: i32,
-	pub latitude: f64,
+    pub latitude: f64,
     pub longitude: f64,
     pub name: Option<String>,
 }
@@ -175,7 +186,7 @@ pub struct Leg {
     #[serde(default)]
     pub completed: Option<NaiveDateTime>,
     pub status: RouteStatus,
-    pub passengers: i32
+    pub passengers: i32,
 }
 
 #[repr(i32)]
@@ -187,11 +198,13 @@ pub enum RouteStatus {
     REJECTED = 3,  // proposal rejected by customer(s)
     ABANDONED = 4, // cancelled after assignment but before 'PICKEDUP'
     STARTED = 5,   // status needed by legs
-    COMPLETED = 6
+    COMPLETED = 6,
 }
 
 impl Default for RouteStatus {
-    fn default() -> Self { RouteStatus::REJECTED }
+    fn default() -> Self {
+        RouteStatus::REJECTED
+    }
 }
 
 impl fmt::Display for RouteStatus {
@@ -202,23 +215,30 @@ impl fmt::Display for RouteStatus {
 
 pub fn get_route_status(idx: i32) -> RouteStatus {
     let s: RouteStatus = unsafe { ::std::mem::transmute(idx) };
-    return s
+    return s;
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Route {
-	pub id: i64,
+    pub id: i64,
     pub status: RouteStatus,
     #[serde(default)]
     pub legs: Vec<Leg>,
     #[serde(default)]
-    pub cab: Cab
+    pub cab: Cab,
 }
 
 impl Default for Route {
     fn default() -> Route {
-        Route { id: -1, status: RouteStatus::REJECTED, legs: vec![], cab: Cab { ..Default::default() } } 
+        Route {
+            id: -1,
+            status: RouteStatus::REJECTED,
+            legs: vec![],
+            cab: Cab {
+                ..Default::default()
+            },
+        }
     }
 }
 
@@ -226,31 +246,31 @@ impl Default for Route {
 pub struct RouteWithOrders {
     pub route: Route,
     pub orders: Vec<Order>,
-    pub cab: Cab // for Kaut app
+    pub cab: Cab, // for Kaut app
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct StopTraffic {
     pub stop: Option<Stop>,
     pub routes: Vec<RouteWithEta>,
-    pub cabs: Vec<Cab>
+    pub cabs: Vec<Cab>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct RouteWithEta {
     pub eta: i16,
-    pub route: Route
+    pub route: Route,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Stats {
     pub kpis: Vec<Stat>,
     pub orders: Vec<Stat>,
-    pub cabs: Vec<Stat>
+    pub cabs: Vec<Stat>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Stat {
     pub name: String,
-    pub int_val: i32
+    pub int_val: i32,
 }
