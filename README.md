@@ -28,7 +28,7 @@ The following endpoints are available now with described purposes:
 | /cabs/{id} | GET | Inform customer about location | { "id": 1, "location": 10, "status": "FREE" }
 | /cabs | PUT | Update location of the cab, mark as FREE | { "location": 9, "status": "ASSIGNED" }
 | /cabs | POST | not used
-| /orders | GET | Kabina (customer) can get its orders | a list of orders
+| /orders | GET | Kabina (customer) can get its orders | a list of orders, see below
 | /orders/{id} | GET | inform about a cab assignment |  { "id": 421901,    "status": "COMPLETED", "fromStand": 15, "toStand": 12, "maxWait": 20,    "maxLoss": 1,    "shared": true,    "rcvdTime": "2020-12-22T00:35:54.291618",    "eta": 0,    "inPool": false,    "cab": null,    "customer": {        "id": 5,        "hibernateLazyInitializer": {}    },    "leg": {        "id": 422128,        "fromStand": 15,        "toStand": 14,        "place": 0,        "status": "COMPLETE",        "route": null,        "hibernateLazyInitializer": {}    },    "route": {        "id": 422127,        "status": "COMPLETE",        "cab": {            "id": 165,            "location": 10,            "status": "FREE",            "hibernateLazyInitializer": {}        },        "legs": null,        "hibernateLazyInitializer": {}    }}
 | /orders | PUT | accepting, canceling a trip, mark as completed | { "status": "ACCEPTED" }
 | /orders | POST | submit a trip request - a cab is needed | {"fromStand": 1, "toStand": 2, "status": "RECEIVED", "maxWait": 10, "maxLoss": 20, "shared": true} 
@@ -40,5 +40,11 @@ The following endpoints are available now with described purposes:
 | /routeswithorders | GET | Kab gets its routes with assigned passengers | as with /routes supplemented by a list of orders assigned to that route
 | /legs | PUT | mark as completed  | { "status": "completed" }
 | /stops | GET | get all stops | [{"id":0,"bearing":180,"latitude":47.507803,"longitude":19.235276},{"id": ...
-| /stops/{id}/traffic | GET | Kavla's source of traffic at the stop | It returns the stop, routes going through it and cabs assigned to these routes
-| /stats | GET | Kanal's source of information | List of KPIs with values and number of orders and cabs with different statuses
+| /stops/{id}/traffic | GET | Kavla's source of traffic at the stop | {"stop":{"id":10,"bearing":-179,"latitude":47.492855,"longitude":19.10876,"name":"Ciprus utca"}, "routes":[{"eta":11,"route":{"Id":1043,"Status":"ASSIGNED", "Legs":[{"Id":5747,"RouteId":1043,"From":3575,"To":4846,"Place":0,"Dist":2,"Started":null,"Completed":null,"Status":"ASSIGNED","Passengers":1},{"Id":5995,"RouteId":1043,"From":4846,"To":1468,"Place":1,"Dist":2,"Started":null,"Completed":null,"Status":"ASSIGNED","Passengers":1}], "Cab":{"Id":3575,"Location":3575,"Status":"ASSIGNED","Seats":12}}}], "cabs":[{"Id":5201,"Location":10,"Status":"FREE","Seats":12}]}
+| /stats | GET | KPIs, Kanal's source of information | {"kpis":[{"name":"AvgDemandSize","int_val":587},{"name":"AvgExtenderTime",... ], "orders":[{"name":"COMPLETED","int_val":56056},{"name":"PICKEDUP",... ], "cabs":[{"name":"ASSIGNED","int_val":6892},{"name":"FREE",...]}
+
+## Testing
+Basic authentication is used, users are identified based on IDs in user name, password is ignored for the time being, nor authorisation is performed (who can call an endpoint).  
+curl -H "Content-type: application/json" -X PUT -u cust1:cust1 -d '{ "Id":775791, "Status":"PICKEDUP", "From":0,"To":1,"Wait":10,"Loss":70}' http://localhost:8080/orders
+
+curl -H "Content-type: application/json" -u cab2:cab2 -X PUT -d '{ "Id":2, "Location":123, "Status":"FREE"}' http://localhost:8080/cabs

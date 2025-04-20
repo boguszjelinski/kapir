@@ -96,7 +96,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_route_with_orders2)
             .service(get_stops) // curl -u cab2:cab2 http://localhost:8080/stops
             .service(get_stops2)
-            .service(get_traffic)
+            .service(get_traffic) // 
             .service(get_stats)
             .service(post_assign_free_cab) // curl -H "Content-type: application/json" -H "Accept: application/json"  -X POST -u cab1:cab1 -d '{ "CustId":100, "From":0, "To":0,"Shared":true,"Loss":10}' http://localhost:8080/assignfreecab
             .service(post_assign_free_cab2)
