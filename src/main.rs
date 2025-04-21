@@ -92,7 +92,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_route) // curl -u cab2:cab2 http://localhost:8080/routes
             .service(get_route2)
             .service(get_route_by_id)
-            .service(get_route_with_orders) //http://localhost:8080/routeswithorders
+            .service(get_route_with_orders) //http://localhost:8080/routewithorders
             .service(get_route_with_orders2)
             .service(get_stops) // curl -u cab2:cab2 http://localhost:8080/stops
             .service(get_stops2)
@@ -184,14 +184,14 @@ async fn get_route(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResp
 async fn get_route2(auth: BasicAuth, db_pool: web::Data<Pool>) -> Result<HttpResponse, Error> {
     return just_get_route(auth, db_pool).await;
 }
-#[get("/routeswithorders")] // just to keep compatibility with Java
+#[get("/routewithorders")] // just to keep compatibility with Java
 async fn get_route_with_orders(
     auth: BasicAuth,
     db_pool: web::Data<Pool>,
 ) -> Result<HttpResponse, Error> {
     return just_get_route_with_orders(auth, db_pool).await;
 }
-#[get("/routeswithorders/")] // just to keep compatibility with Java
+#[get("/routewithorders/")] // just to keep compatibility with Java
 async fn get_route_with_orders2(
     auth: BasicAuth,
     db_pool: web::Data<Pool>,
