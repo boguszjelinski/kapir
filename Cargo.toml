@@ -4,15 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-actix-web = "4"
-actix-web-httpauth = "0.8.0"
-actix-cors = "0.6.4"
+actix-web = "4.10.2"
+actix-web-httpauth = "0.8.2"
+actix-cors = "0.7.1"
 mysql_async = "0.33.0"
-mysql = "20.0.2"
-derive_more = "0.99.17"
-serde = { version = "1.0.137", features = ["derive"] }
-serde_with = "1.6.3"
-log4rs = "1.1.1"
-log = "0.4.8"
-chrono = { version = "0.4", features = ["serde"] }
-config = "0.13.1"
+mysql = { version = "26.0.0", features = ["chrono"] }
+derive_more = "2.0.1"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_with = "3.12.0"
+log4rs = "1.3.0"
+log = "0.4.27"
+chrono = { version = "0.4.40", features = ["serde"] }
+config = "0.15.11"
+

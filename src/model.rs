@@ -8,6 +8,7 @@ pub struct Cab {
     pub id: i64,
     pub location: i32,
     pub status: CabStatus,
+    #[serde(default)]
     pub seats: i8,
 }
 
@@ -186,6 +187,7 @@ pub struct Leg {
     #[serde(default)]
     pub completed: Option<NaiveDateTime>,
     pub status: RouteStatus,
+    #[serde(default)]
     pub passengers: i32,
 }
 

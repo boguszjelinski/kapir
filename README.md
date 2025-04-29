@@ -26,7 +26,7 @@ The following endpoints are available now with described purposes:
 | Endpoint | Method | Purpose | Response example
 |----------|--------|----------------------------------|-----
 | /cabs/{id} | GET | Inform customer about location | { "id": 1, "location": 10, "status": "FREE" }
-| /cabs | PUT | Update location of the cab, mark as FREE | { "location": 9, "status": "ASSIGNED" }
+| /cabs | PUT | Update location of the cab, mark as FREE | Sent: { "Id":2, "Location":123, "Status":"FREE", "Seats": 15}, Received: { "location": 9, "status": "ASSIGNED" }
 | /cabs | POST | not used
 | /orders | GET | Kabina (customer) can get its orders | a list of orders, see below
 | /orders/{id} | GET | inform about a cab assignment |  { "id": 421901,    "status": "COMPLETED", "fromStand": 15, "toStand": 12, "maxWait": 20,    "maxLoss": 1,    "shared": true,    "rcvdTime": "2020-12-22T00:35:54.291618",    "eta": 0,    "inPool": false,    "cab": null,    "customer": {        "id": 5,        "hibernateLazyInitializer": {}    },    "leg": {        "id": 422128,        "fromStand": 15,        "toStand": 14,        "place": 0,        "status": "COMPLETE",        "route": null,        "hibernateLazyInitializer": {}    },    "route": {        "id": 422127,        "status": "COMPLETE",        "cab": {            "id": 165,            "location": 10,            "status": "FREE",            "hibernateLazyInitializer": {}        },        "legs": null,        "hibernateLazyInitializer": {}    }}

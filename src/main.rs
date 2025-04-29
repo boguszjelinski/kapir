@@ -39,6 +39,9 @@ impl std::error::Error for MyError {}
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let mut dbhost: String;
+    let dbuser: String;
+    let dbpass: String;
+    let dbname: String;
     let mut bind_host: String;
     let bind_port: u16;
 
@@ -51,6 +54,9 @@ async fn main() -> std::io::Result<()> {
         .unwrap();
 
     dbhost = cfg["dbhost"].clone();
+    dbuser = cfg["dbuser"].clone();
+    dbpass = cfg["dbpass"].clone();
+    dbname = cfg["dbname"].clone();
     bind_host = cfg["myhost"].clone();
     bind_port = cfg["myport"].clone().parse::<u16>().unwrap();
 
@@ -65,8 +71,12 @@ async fn main() -> std::io::Result<()> {
 
     setup_logger("kapi.log".to_string());
 
-    //let pool: Pool = mysql_async::Pool::new("mysql://kabina:kaboot@localhost:3306/kabina");
-    let pool = Pool::new(dbhost).unwrap();
+    let opts = OptsBuilder::new()
+        .ip_or_hostname(Some(dbhost))
+        .user(Some(dbuser))
+        .pass(Some(dbpass))
+        .db_name(Some(dbname));
+    let pool = Pool::new(opts).unwrap();
 
     init_dist_service(&pool).await;
 

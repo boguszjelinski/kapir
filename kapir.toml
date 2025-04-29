@@ -1,3 +1,6 @@
-dbhost = "mysql://kabina:kaboot@localhost:3306/kabina"
+dbhost = "127.0.0.1"
+dbuser = "kabina" 
+dbpass = "kaboot"
+dbname = "kabina"
 myhost = "localhost"
 myport = 8080
