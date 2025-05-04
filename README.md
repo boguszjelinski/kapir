@@ -44,7 +44,21 @@ The following endpoints are available now with described purposes:
 | /stats | GET | KPIs, Kanal's source of information | {"kpis":[{"name":"AvgDemandSize","int_val":587},{"name":"AvgExtenderTime",... ], "orders":[{"name":"COMPLETED","int_val":56056},{"name":"PICKEDUP",... ], "cabs":[{"name":"ASSIGNED","int_val":6892},{"name":"FREE",...]}
 
 ## Testing
-Basic authentication is used, users are identified based on IDs in user name, password is ignored for the time being, nor authorisation is performed (who can call an endpoint).  
+Basic authentication is used, users are identified based on IDs in user name, password is ignored for the time being, nor authorisation is performed (who can call an endpoint). You can send requests manually or via two available client simulators written in Go and Java, which can send thousands requests per minute.
+
+### Curl
 curl -H "Content-type: application/json" -X PUT -u cust1:cust1 -d '{ "Id":775791, "Status":"PICKEDUP", "From":0,"To":1,"Wait":10,"Loss":70}' http://localhost:8080/orders
 
 curl -H "Content-type: application/json" -u cab2:cab2 -X PUT -d '{ "Id":2, "Location":123, "Status":"FREE"}' http://localhost:8080/cabs
+
+### Go
+'go build' will produce 'kabina' executable. By running './kabina cab' cabs will be simulated, they will send their location and wait for assignement. './kabina' will send custmers' requests. main.go contains simulation parameters, they need to be adjusted. API host address can be set in utils.go. 
+
+### Java
+You need to find and download three JAR files (dependencies) to be able to run it, this or newer versions should do - jackson-databind-2.19.0.jar, jackson-core-2.19.0.jar:jackson-annotations-2.19.0.jar. Go to the directory and run these two commands to compile and run (both cabs and customers will be run):
+
+```
+javac -d . -cp jackson-databind-2.19.0.jar:jackson-core-2.19.0.jar *.java
+java -cp .:jackson-databind-2.19.0.jar:jackson-core-2.19.0.jar:jackson-annotations-2.19.0.jar org.kabina.kat.Main
+```
+Simulation parameters should be adjusted in Main.java, location of API host can be checked in ApiClient.java.
